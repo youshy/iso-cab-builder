@@ -58,4 +58,22 @@ describe('spectrum + findPeaks', () => {
     const q = Math.PI * f0 * tau;
     expect(Math.abs(top.q - q) / q).toBeLessThan(0.2);
   });
+
+  it('tail window keeps q accurate for a long decaying record', () => {
+    const fs = 8000, tau = 0.05, f0 = 200;
+    const s = new Float32Array(Math.round(fs * 20 * tau));
+    for (let i = 0; i < s.length; i++) s[i] = Math.exp(-i / fs / tau) * Math.sin(2 * Math.PI * f0 * (i / fs));
+    const { freqs, db } = spectrum(s, fs, { window: 'tail' });
+    const top = findPeaks(freqs, db, { minProminence: 20, fMin: 50, fMax: 1000 }).sort((a, b) => b.level - a.level)[0];
+    const q = Math.PI * f0 * tau;
+    expect(Math.abs(top.q - q) / q).toBeLessThan(0.2);
+  });
+
+  it('returns NaN q when no -3 dB crossing exists', () => {
+    const freqs = Float32Array.from([0, 1, 2, 3, 4]);
+    const db = Float32Array.from([9, 9.5, 10, 9.6, 9.7]);
+    const p = findPeaks(freqs, db, { minProminence: 0.1 });
+    expect(p.length).toBeGreaterThan(0);
+    expect(Number.isNaN(p[0].q)).toBe(true);
+  });
 });

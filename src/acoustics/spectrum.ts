@@ -1,5 +1,6 @@
 /** Hann-windowed, zero-padded magnitude spectrum (dB) and peak picking. */
 
+/** q is NaN when the -3 dB bandwidth cannot be determined. */
 export type Peak = { f: number; level: number; q: number };
 
 /** In-place iterative radix-2 FFT. */
@@ -34,14 +35,35 @@ function fft(re: Float64Array, im: Float64Array): void {
   }
 }
 
-export function spectrum(signal: Float32Array, fs: number): { freqs: Float32Array; db: Float32Array } {
+/**
+ * Magnitude spectrum in dB, bins 0..N/2, zero-padded to a power of 2.
+ * window 'hann' (default): Hann over the whole record; it inflates Q of decaying signals.
+ * window 'tail': rectangular with a half-Hann taper over the last 10% of samples;
+ * use this for impulse responses.
+ * Callers of findPeaks should set fMin/fMax or a higher minProminence: float32 rounding
+ * yields ripple peaks around -110 dB that pass the default prominence.
+ */
+export function spectrum(
+  signal: Float32Array,
+  fs: number,
+  opts: { window?: 'hann' | 'tail' } = {},
+): { freqs: Float32Array; db: Float32Array } {
   const len = signal.length;
   let n = 1;
   while (n < len) n <<= 1;
   const re = new Float64Array(n);
   const im = new Float64Array(n);
   const denom = Math.max(1, len - 1);
-  for (let i = 0; i < len; i++) re[i] = signal[i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / denom));
+  if (opts.window === 'tail') {
+    const taper = Math.max(1, Math.floor(len * 0.1));
+    const start = len - taper;
+    for (let i = 0; i < len; i++) {
+      const w = i < start ? 1 : 0.5 + 0.5 * Math.cos((Math.PI * (i - start + 1)) / taper);
+      re[i] = signal[i] * w;
+    }
+  } else {
+    for (let i = 0; i < len; i++) re[i] = signal[i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / denom));
+  }
   fft(re, im);
   const bins = (n >> 1) + 1;
   const freqs = new Float32Array(bins);
@@ -102,8 +124,8 @@ export function findPeaks(
     if (lo !== null && hi !== null) bw = hi - lo;
     else if (lo !== null) bw = 2 * (f - lo);
     else if (hi !== null) bw = 2 * (hi - f);
-    else bw = Infinity;
-    out.push({ f, level, q: bw > 0 ? f / bw : Infinity });
+    else bw = NaN; // no -3 dB crossing on either side: q unknown
+    out.push({ f, level, q: bw > 0 ? f / bw : NaN });
   }
   return out.sort((x, y) => x.f - y.f);
 }
