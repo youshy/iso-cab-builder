@@ -333,3 +333,19 @@ describe('renaming and deleting designs', () => {
     expect(s.currentProject.value.versions).toHaveLength(1)
   })
 })
+
+describe('simulation settings', () => {
+  it('a NaN or string top frequency is rejected by the store and never reaches the simulation', () => {
+    const s = createAppStore(memoryBackend())
+    const before = s.design.value.sim.fMax
+    s.update((d) => void (d.sim.fMax = Number('abc')))
+    expect(s.design.value.sim.fMax).toBe(before)
+    s.update((d) => void ((d.sim as { fMax: unknown }).fMax = '1500'))
+    expect(s.design.value.sim.fMax).toBe(before)
+    s.update((d) => void (d.sim.fMax = 5000))
+    expect(s.design.value.sim.fMax).toBe(before)
+    expect(s.editError.value).toMatch(/sim\.fMax/)
+    s.update((d) => void (d.sim.fMax = 2000))
+    expect(s.design.value.sim.fMax).toBe(2000)
+  })
+})

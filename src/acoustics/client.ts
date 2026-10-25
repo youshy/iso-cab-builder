@@ -55,6 +55,8 @@ export function simKey(d: Design, lib: Library, opts: SimOptions): string {
 }
 
 export const DEBOUNCE_MS = 400
+/** Rough run time on a laptop, seconds: about 2 s at 1000 Hz, growing a little faster than fMax cubed. */
+export const runSecondsEstimate = (fMax: number): number => Math.round(2.5 * (fMax / 1000) ** 3.4)
 const CACHE_SIZE = 8
 /** A run that takes longer than this is assumed stuck: 30 s at 1000 Hz, growing with fMax cubed. */
 export const watchdogMs = (opts: SimOptions): number => 30_000 * (opts.fMax / 1000) ** 3
@@ -135,7 +137,8 @@ export function createSimClient(spawn: () => Worker, options: ClientOptions = {}
     active = { ...job, worker, watchdog: setTimeout(() => fail(job, 'Simulation timed out'), watchdogMs(opts)) }
     worker.onmessage = (e: MessageEvent<WorkerReply>) => {
       const m = e.data
-      if (m.id !== id) return
+      // An error from outside the handler carries id -1: it still belongs to this worker's only run.
+      if (m.id !== id && !(m.type === 'error' && m.id === -1)) return
       if (m.type === 'progress') progress.value = m.p
       else if (m.type === 'done') {
         stopActive()
@@ -145,7 +148,11 @@ export function createSimClient(spawn: () => Worker, options: ClientOptions = {}
         job.resolve(m.result)
       } else fail(job, m.message)
     }
-    worker.onerror = (e: ErrorEvent) => fail(job, e.message || 'Simulation worker failed')
+    // A bare error event (no message) means the worker script itself could not be loaded or run.
+    worker.onerror = (e: ErrorEvent) => {
+      e.preventDefault?.()
+      fail(job, e.message || 'Simulation worker could not start: reload the page')
+    }
     worker.onmessageerror = () => fail(job, 'Simulation result could not be read')
     const msg: WorkerRequest = { id, d, lib, opts }
     worker.postMessage(msg)

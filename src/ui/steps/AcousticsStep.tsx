@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import { curveFrom, defaultSlices, findSlice, medianDb, modeDelta, nearestAnalytic, strongestModes } from '../../acoustics/compare'
 import type { SimResult, SimSlice } from '../../acoustics/fdtd'
 import { firstModes } from '../../acoustics/analytic'
+import { runSecondsEstimate } from '../../acoustics/client'
 import { compareClient, currentClient, customSlice, sliceClient } from '../../acoustics/schedule'
 import { resolveDims } from '../../geometry/dimensions'
 import type { Axis } from '../../model/schema'
@@ -126,9 +127,15 @@ export function AcousticsStep() {
         </div>
         <input
           id="fmax" type="range" min={250} max={2000} step={50} value={fMax}
-          onChange={(e) => update((x) => void (x.sim.fMax = Number((e.target as HTMLInputElement).value)))}
+          onChange={(e) => {
+            const v = Number((e.target as HTMLInputElement).value)
+            if (Number.isFinite(v)) update((x) => void (x.sim.fMax = Math.min(2000, Math.max(250, Math.round(v)))))
+          }}
         />
-        <p class="hint">Higher is slower: 2000 Hz takes much longer than 1000 Hz.</p>
+        {fMax >= 1500
+          ? <p class="hint">Higher limit: runs take longer (about {runSecondsEstimate(fMax)} s).</p>
+          : <p class="hint">Higher is slower: 2000 Hz takes much longer than 1000 Hz.</p>}
+        {currentClient.error.value && <p class="warn">Simulation failed: {currentClient.error.value}</p>}
         {cur && <p class="hint num">Smallest change this grid resolves: {resolutionText(cur.resolutionMm)} (grid {resolutionText(cur.dx)})</p>}
         {d.sim.probes.length > 0 && (
           <div class="row">

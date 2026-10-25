@@ -1,10 +1,15 @@
+import SimWorker from './worker?worker&inline'
 import { computed, effect, signal } from '@preact/signals'
 import { compareDesign, design, library, simCompare, simCurrent, sliceRequest } from '../model/store'
 import { compareSimInput, defaultSlices, isDefaultSlice } from './compare'
 import { createSimClient, simKey } from './client'
 import type { SimSlice } from './fdtd'
 
-const spawn = () => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
+/**
+ * Each run gets a fresh worker. It is inlined (a blob URL, no network fetch), so a run cannot fail because
+ * the worker file is gone after a redeploy or the connection dropped; fetching it per run did exactly that.
+ */
+const spawn = () => new SimWorker()
 
 /** Two clients so the compare run never cancels the current one. */
 export const currentClient = createSimClient(spawn)

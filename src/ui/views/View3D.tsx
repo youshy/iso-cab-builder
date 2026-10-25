@@ -44,12 +44,14 @@ function toMesh(s: Solid, look: Look, offset: Vector3 | null, clip: Plane[] | nu
   const geo = new BufferGeometry()
   geo.setAttribute('position', new Float32BufferAttribute(s.vertices, 3))
   geo.setIndex(s.indices)
+  // Only pass clipping keys with planes: three warns about a parameter given as undefined.
+  const clipping = clip ? { clippingPlanes: clip, clipIntersection: true } : {}
   const mat = new MeshStandardMaterial({
     color: new Color(look.color), flatShading: true, side: DoubleSide, roughness: 0.9, metalness: 0,
     transparent: look.opacity < 1, opacity: look.opacity, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
-    clippingPlanes: clip ?? undefined, clipIntersection: true,
+    ...clipping,
   })
-  const line = new LineBasicMaterial({ color: look.edge, clippingPlanes: clip ?? undefined, clipIntersection: true })
+  const line = new LineBasicMaterial({ color: look.edge, ...clipping })
   const g = new Group()
   g.add(new Mesh(geo, mat))
   g.add(new LineSegments(new EdgesGeometry(geo, 20), line))

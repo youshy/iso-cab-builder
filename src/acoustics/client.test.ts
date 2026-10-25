@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defaultDesign, defaultLibrary } from '../model/defaults'
 import type { Design } from '../model/schema'
-import { createSimClient, simKey } from './client'
+import { createSimClient, runSecondsEstimate, simKey } from './client'
 import type { SimResult } from './fdtd'
 
 const lib = defaultLibrary()
@@ -139,6 +139,31 @@ describe('createSimClient', () => {
     w.reply({ id: w.posted[0].id, type: 'error', message: 'No air' })
     await expect(p).rejects.toThrow('No air')
     expect(c.status.value).toBe('stale')
+  })
+
+  it('an error raised outside the worker handler (id -1) still fails the run with its message', async () => {
+    const c = createSimClient(spawn)
+    const p = c.request(defaultDesign(), lib, opts)
+    p.catch(() => {})
+    vi.advanceTimersByTime(400)
+    FakeWorker.all[0].reply({ id: -1, type: 'error', message: 'Invalid typed array length: NaN' })
+    await expect(p).rejects.toThrow('Invalid typed array length: NaN')
+    expect(c.error.value).toBe('Invalid typed array length: NaN')
+  })
+
+  it('a bare worker error event (script not loaded) gets a message saying so', async () => {
+    const c = createSimClient(spawn)
+    const p = c.request(defaultDesign(), lib, opts)
+    p.catch(() => {})
+    vi.advanceTimersByTime(400)
+    FakeWorker.all[0].onerror?.({ message: '' })
+    await expect(p).rejects.toThrow(/could not start/)
+  })
+
+  it('run time estimate grows steeply with the top frequency', () => {
+    expect(runSecondsEstimate(1000)).toBeLessThan(5)
+    expect(runSecondsEstimate(1500)).toBeGreaterThanOrEqual(6)
+    expect(runSecondsEstimate(2000)).toBeGreaterThanOrEqual(20)
   })
 
   it('evicts the least recently used result after 8 entries', async () => {
