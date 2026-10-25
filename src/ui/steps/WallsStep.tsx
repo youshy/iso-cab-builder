@@ -1,14 +1,14 @@
 import { signal } from '@preact/signals'
 import { Fragment } from 'preact'
 import { useState } from 'preact/hooks'
-import { doorStack, effectiveWallStack, escape, OCTAVES, THIRD_OCTAVES, tlStack, type TlItem } from '../../acoustics/tl'
+import { doorStack, effectiveWallStack, escape, OCTAVES, THIRD_OCTAVES, tlStack, type TlItem, type TlResult } from '../../acoustics/tl'
 import { hasSingleLayerBox } from '../../geometry/boxes'
-import { wallTreatments } from '../../geometry/treatments'
-import { activeInterior, stackThickness, WALLS, wallStack } from '../../geometry/walls'
-import type { Design, Gap, JointType, Layer, StackItem, WallId } from '../../model/schema'
+import { stackThickness, WALLS } from '../../geometry/walls'
+import type { Gap, JointType, Layer, Library, StackItem, WallId } from '../../model/schema'
 import { addLayer, canInsertGapAt, firstFreeBoundary, insertGap, moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
 import { compareDesign, compareVersion, design, fmtLen, library, update } from '../../model/store'
-import { Chart, type ChartSeries } from '../Chart'
+import { OverlayChart, OverlayLegend, type OverlaySeries } from '../Chart'
+import { groupStacks, type StackGroup } from '../chartScale'
 import { libraryOpen } from '../library/MaterialLibrary'
 import { NumberField } from '../NumberField'
 import { useRowIds } from '../useRowIds'
@@ -21,9 +21,6 @@ const editing = signal<WallId | null>(null)
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 const targetTitle = (t: Target) => (t === 'default' ? 'Default wall' : `${cap(t)} wall`)
-
-/** Walls whose facets or treatments change their stack as built. */
-const builtWalls = (d: Design) => WALLS.filter((w) => activeInterior(d, w) || wallTreatments(d, w).length > 0)
 
 /** Apply a pure stack edit to the default stack or a wall override. */
 function editStack(target: Target, fn: (s: StackItem[]) => StackItem[]) {
@@ -90,32 +87,63 @@ function LayerCells({ item, i, target }: { item: Layer; i: number; target: Targe
       {showCustom && (
         <NumberField ariaLabel={`Layer ${i + 1} custom thickness`} value={item.thickness} onCommit={(v) => patchItem(target, i, { thickness: v })} />
       )}
+      <div class="hint cellhint">Insulation goes in a cavity, see Add cavity</div>
     </div>
   )
 }
 
 function GapCells({ item, i, target }: { item: Gap; i: number; target: Target }) {
   const fills = library.value.materials.filter((m) => m.kind === 'fill')
+  const fill = fills.find((m) => m.id === item.fillMaterialId)
+  const insulated = item.fill === 'insulation'
+  const listed = !!fill?.thicknesses.includes(item.width)
+  const [custom, setCustom] = useState(false)
+  const showCustom = !insulated || custom || !listed
+  const setFill = (next: Gap['fill']) => {
+    const first = fill?.thicknesses[0]
+    setCustom(false)
+    patchItem(target, i, next === 'insulation' && first !== undefined ? { fill: next, width: first } : { fill: next })
+  }
   return (
     <div class="main-cell">
-      <b>Air gap</b>
-      <NumberField ariaLabel="Gap width" value={item.width} onCommit={(v) => patchItem(target, i, { width: v })} />
-      <select aria-label="Decoupling" value={item.decoupling} onChange={(e) => patchItem(target, i, { decoupling: (e.target as HTMLSelectElement).value as Gap['decoupling'] })}>
-        <option value="clips">Resilient clips</option>
-        <option value="strips">Rigid strips</option>
-      </select>
-      <select aria-label="Gap fill" value={item.fill} onChange={(e) => patchItem(target, i, { fill: (e.target as HTMLSelectElement).value as Gap['fill'] })}>
+      <b>{insulated ? `Cavity: ${fill?.name ?? 'Missing material'} ${fmtLen(item.width)}` : `Cavity: air ${fmtLen(item.width)}`}</b>
+      <select aria-label="Gap fill" value={item.fill} onChange={(e) => setFill((e.target as HTMLSelectElement).value as Gap['fill'])}>
         <option value="insulation">Insulation</option>
         <option value="empty">Empty</option>
       </select>
-      {item.fill === 'insulation' && (
+      {insulated && (
         <select aria-label="Gap insulation" value={item.fillMaterialId} onChange={(e) => patchItem(target, i, { fillMaterialId: (e.target as HTMLSelectElement).value })}>
           {fills.map((m) => (
             <option key={m.id} value={m.id}>{m.name}</option>
           ))}
-          {!fills.some((m) => m.id === item.fillMaterialId) && <option value={item.fillMaterialId}>Missing material</option>}
+          {!fill && <option value={item.fillMaterialId}>Missing material</option>}
         </select>
       )}
+      {insulated && fill && (
+        <select
+          class="num"
+          aria-label="Gap width"
+          value={showCustom ? 'custom' : String(item.width)}
+          onChange={(e) => {
+            const v = (e.target as HTMLSelectElement).value
+            if (v === 'custom') setCustom(true)
+            else {
+              setCustom(false)
+              patchItem(target, i, { width: Number(v) })
+            }
+          }}
+        >
+          {fill.thicknesses.map((t) => (
+            <option key={t} value={String(t)}>{fmtLen(t)}</option>
+          ))}
+          <option value="custom">Custom</option>
+        </select>
+      )}
+      {showCustom && <NumberField ariaLabel={insulated ? 'Gap custom width' : 'Gap width'} value={item.width} onCommit={(v) => patchItem(target, i, { width: v })} />}
+      <select aria-label="Decoupling" value={item.decoupling} onChange={(e) => patchItem(target, i, { decoupling: (e.target as HTMLSelectElement).value as Gap['decoupling'] })}>
+        <option value="clips">Resilient clips</option>
+        <option value="strips">Rigid strips</option>
+      </select>
     </div>
   )
 }
@@ -160,7 +188,7 @@ function StackEditor({ target, stack }: { target: Target; stack: StackItem[] }) 
           Add layer
         </button>
         <button type="button" class="btn" disabled={free < 0} onClick={() => run(insertGap(stack, lib, free), () => rows.inserted(free))}>
-          Add air gap
+          Add cavity
         </button>
         <span class="hint num">Total {fmtLen(stackThickness(stack))}, outside first</span>
       </div>
@@ -205,37 +233,131 @@ function JointPicker() {
   )
 }
 
-function StackChart({ title, stack, compareStack }: { title: string; stack: TlItem[]; compareStack: TlItem[] | null }) {
+/** Series colours in fixed order (dataviz categorical slots, orange left to the selection accent). */
+const SERIES_COLORS = ['#2a78d6', '#1baf7a', '#6250d6', '#e87ba4', '#008300', '#e34948', '#eda100']
+
+interface GroupRow {
+  group: StackGroup<TlItem>
+  color: string
+  tl: TlResult
+  compare: TlResult | null
+  thickness: number
+  mass: number
+  delta: number | null
+}
+
+const layersOf = (stack: TlItem[]) => stack.filter((i): i is Layer => i.kind === 'layer')
+const massOf = (stack: TlItem[], lib: Library) =>
+  layersOf(stack).reduce((a, l) => a + ((lib.materials.find((m) => m.id === l.materialId)?.density ?? 0) * l.thickness) / 1000, 0)
+
+/** As-built stacks of every wall and the door, grouped by identical stack. Compare stacks follow the group's first member. */
+function buildRows(): GroupRow[] {
+  const d = design.value
+  const cmp = compareDesign.value
   const lib = library.value
-  const cur = tlStack(stack, lib)
-  const series: ChartSeries[] = [{ label: 'Current', y: cur.thirds }]
-  if (compareStack) series.push({ label: `Compare v${compareVersion.value}`, y: tlStack(compareStack, lib).thirds, dashed: true })
+  const entries = (x: typeof d) => [
+    ...WALLS.map((w) => ({ name: cap(w), stack: effectiveWallStack(x, lib, w), tag: d.wallOverrides[w] ? 'override' : 'default' })),
+    ...(doorStack(x, lib) ? [{ name: 'Door', stack: doorStack(x, lib)! }] : []),
+  ]
+  const groups = groupStacks(entries(d), WALLS.length)
+  const cmpByName = cmp ? new Map(entries(cmp).map((e) => [e.name, e.stack])) : null
+  const base = groups.reduce((best, g, k) => (g.tags.filter((t) => t === 'default').length > groups[best].tags.filter((t) => t === 'default').length ? k : best), 0)
+  const rows = groups.map((group, k) => {
+    const tl = tlStack(group.stack, lib)
+    const cs = cmpByName?.get(group.names[0])
+    return {
+      group,
+      color: SERIES_COLORS[k % SERIES_COLORS.length],
+      tl,
+      compare: cs ? tlStack(cs, lib) : null,
+      thickness: stackThickness(group.stack.filter((i): i is StackItem => i.kind !== 'absorber')),
+      mass: massOf(group.stack, lib),
+      delta: null as number | null,
+    }
+  })
+  rows.forEach((r, k) => (r.delta = k === base ? null : r.tl.single - rows[base].tl.single))
+  return rows
+}
+
+const hz = (f: number | null) => (f === null ? '—' : `${Math.round(f)}`)
+
+function WallTlChart({ rows }: { rows: GroupRow[] }) {
+  const v = compareVersion.value
+  const series: OverlaySeries[] = rows.flatMap((r) => {
+    const vlines = [
+      ...r.tl.f0s.map((f) => ({ x: f, label: `${r.tl.f0s.length > 1 ? 'cavity' : 'air-gap'} dip ${hz(f)} Hz` })),
+      ...(r.tl.fc !== null ? [{ x: r.tl.fc, label: `coincidence dip ${hz(r.tl.fc)} Hz` }] : []),
+    ]
+    const cur: OverlaySeries = { label: r.group.label, color: r.color, y: r.tl.thirds, vlines }
+    return r.compare ? [cur, { label: `${r.group.label}, v${v}`, color: r.color, y: r.compare.thirds, dashed: true }] : [cur]
+  })
+  const models = [...new Set(rows.map((r) => r.tl.model))]
   return (
     <div class="card">
-      <b>{title}</b>
-      <div class="hint">
-        {cur.model}. Average TL about {cur.single.toFixed(0)} dB, 100 Hz to 3.15 kHz.
-        {cur.f0s.length > 0 && ` Dips at ${cur.f0s.map((f) => `${Math.round(f)} Hz`).join(', ')}.`}
-      </div>
-      <Chart
+      <b>Sound blocked by each wall (estimate)</b>
+      <div class="hint">Higher is quieter outside. 10 dB ≈ half as loud. {models.join(' / ')}.</div>
+      <OverlayLegend series={series} />
+      <OverlayChart
+        title="Transmission loss per wall stack"
         x={THIRD_OCTAVES}
+        domain={[50, 5000]}
+        ticks={[63, 125, 250, 500, 1000, 2000, 4000]}
         series={series}
-        xLog
-        yLabel="TL (dB)"
-        markers={cur.f0s.map((f, k) => ({ x: f, label: cur.f0s.length > 1 ? `resonance ${k + 1}` : 'air-gap resonance' }))}
+        yLabel="Transmission loss (dB)"
+        yStep={10}
+        yInclude={[0]}
+        band={{ from: 80, to: 1200, label: 'Guitar fundamentals' }}
+        digits={0}
       />
+      <div class="hint">Thin dashed vertical lines mark each curve's dips: air-gap (cavity) resonance and coincidence.</div>
     </div>
   )
 }
 
-function EscapeTable() {
+function SummaryTable({ rows }: { rows: GroupRow[] }) {
+  return (
+    <table class="etable stacktable">
+      <thead>
+        <tr>
+          <th>Stack</th>
+          <th>Thickness (mm)</th>
+          <th>Mass (kg/m²)</th>
+          <th>Air-gap dip (Hz)</th>
+          <th>Coincidence dip (Hz)</th>
+          <th>Average TL (dB)</th>
+          <th>vs default (dB)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.group.label}>
+            <td>
+              <i class="sw" style={{ background: r.color }} />
+              {r.group.label}
+            </td>
+            <td class="num">{Math.round(r.thickness)}</td>
+            <td class="num">{r.mass.toFixed(1)}</td>
+            <td class="num">{r.tl.f0s.length > 0 ? r.tl.f0s.map((f) => hz(f)).join(', ') : '—'}</td>
+            <td class="num">{hz(r.tl.fc)}</td>
+            <td class="num">{r.tl.single.toFixed(1)}</td>
+            <td class={`num ${r.delta !== null && r.delta < 0 ? 'neg' : ''}`}>{r.delta === null ? '—' : `${r.delta > 0 ? '+' : ''}${r.delta.toFixed(1)}`}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function EscapeSection({ rows }: { rows: GroupRow[] }) {
   const d = design.value
   const lib = library.value
+  const cmp = compareDesign.value
   const e = escape(d, lib)
-  const door = doorStack(d, lib)
-  const stacks: TlItem[][] = [...WALLS.map((w) => effectiveWallStack(d, lib, w)), ...(door ? [door] : [])]
-  const models = [...new Set(stacks.map((s) => tlStack(s, lib).model))]
+  const target = d.escape.outsideTarget
   const worstAt = OCTAVES[e.margin.indexOf(e.worst)]
+  const cols = OCTAVES.map((f, i) => ({ f, i, lo: f / Math.SQRT2, hi: f * Math.SQRT2 }))
+  const series: OverlaySeries[] = [{ label: 'Outside level', color: SERIES_COLORS[0], y: e.lout, points: true }]
+  if (cmp) series.push({ label: `Outside level, v${compareVersion.value}`, color: SERIES_COLORS[0], y: escape(cmp, lib).lout, dashed: true, points: true })
   const row = (label: string, cells: (i: number) => preact.ComponentChild) => (
     <tr>
       <td>{label}</td>
@@ -246,9 +368,25 @@ function EscapeTable() {
   )
   return (
     <>
-      <h3>Sound escape estimate ({models.join(' / ')})</h3>
+      <div class="card">
+        <b>Sound outside the box vs your target (estimate)</b>
+        <div class="hint">Shaded octaves are louder than the target. {[...new Set(rows.map((r) => r.tl.model))].join(' / ')}.</div>
+        <OverlayLegend series={series} />
+        <OverlayChart
+          title="Outside level per octave against the target"
+          x={OCTAVES}
+          domain={[OCTAVES[0] / Math.SQRT2, OCTAVES[OCTAVES.length - 1] * Math.SQRT2]}
+          ticks={OCTAVES}
+          series={series}
+          yLabel={`dB SPL at ${d.escape.distance} m`}
+          yStep={10}
+          hline={{ y: target, label: `Target ${target} dB` }}
+          over={cols.filter((c) => e.lout[c.i] > target).map((c) => ({ from: c.lo, to: c.hi }))}
+        />
+      </div>
+      <h3>Escape inputs</h3>
       <div class="row">
-        <NumberField label="Target outside" kind="plain" suffix="dB" value={d.escape.outsideTarget} onCommit={(v) => update((x) => void (x.escape.outsideTarget = v))} />
+        <NumberField label="Target outside" kind="plain" suffix="dB" value={target} onCommit={(v) => update((x) => void (x.escape.outsideTarget = v))} />
         <NumberField label="Distance" kind="plain" suffix="m" min={0.01} value={d.escape.distance} onCommit={(v) => update((x) => void (x.escape.distance = v))} />
       </div>
       <table class="etable">
@@ -283,11 +421,20 @@ function EscapeTable() {
   )
 }
 
+function WallAcoustics() {
+  const rows = buildRows()
+  return (
+    <>
+      <WallTlChart rows={rows} />
+      <SummaryTable rows={rows} />
+      <EscapeSection rows={rows} />
+    </>
+  )
+}
+
 export function WallsStep() {
   const d = design.value
-  const cmp = compareDesign.value
   const overrides = WALLS.filter((w) => d.wallOverrides[w])
-  const door = doorStack(d, library.value)
   return (
     <>
       <aside>
@@ -320,16 +467,7 @@ export function WallsStep() {
         <div class="wallview">
           <View3DPanel design={d} highlight={editing.value && d.wallOverrides[editing.value] ? editing.value : undefined} initial="section" />
         </div>
-        <h3>Transmission loss per stack</h3>
-        <StackChart title="Default wall" stack={d.wallDefault} compareStack={cmp ? cmp.wallDefault : null} />
-        {overrides.map((w) => (
-          <StackChart key={w} title={targetTitle(w)} stack={d.wallOverrides[w]!} compareStack={cmp ? wallStack(cmp, w) : null} />
-        ))}
-        {builtWalls(d).map((w) => (
-          <StackChart key={`built-${w}`} title={`${cap(w)} (as built)`} stack={effectiveWallStack(d, library.value, w)} compareStack={cmp ? effectiveWallStack(cmp, library.value, w) : null} />
-        ))}
-        {door && <StackChart key="door" title="Door" stack={door} compareStack={cmp ? doorStack(cmp, library.value) : null} />}
-        <EscapeTable />
+        <WallAcoustics />
       </section>
     </>
   )

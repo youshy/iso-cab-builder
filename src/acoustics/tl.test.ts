@@ -312,3 +312,11 @@ describe('interior absorption', () => {
     r.lin.forEach((l, i) => expect(l).toBeCloseTo(interiorLevel(d.escape.insideLevel[i], r.absorption[i]), 9))
   })
 })
+
+describe('tlStack fc', () => {
+  it('is the lowest leaf coincidence frequency, null for no layers', () => {
+    const r = tlStack([mdf(18), gap(), mdf(18)], lib)
+    expect(r.fc).toBeCloseTo(leaf([mdf(18)], lib).fc, 6)
+    expect(tlStack([], lib).fc).toBeNull()
+  })
+})

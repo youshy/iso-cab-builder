@@ -83,13 +83,15 @@ export interface TlResult {
   f0s: number[]
   single: number
   model: string
+  /** Lowest coincidence frequency among the leaf groups, Hz; null when no leaf has one. */
+  fc: number | null
 }
 
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
 
 function summarize(thirds: number[], f0s: number[], model: string): TlResult {
   const sel = thirds.filter((_, i) => THIRD_OCTAVES[i] >= 100 && THIRD_OCTAVES[i] <= 3150)
-  return { thirds, f0: f0s[0] ?? null, f0s, single: mean(sel), model }
+  return { thirds, f0: f0s[0] ?? null, f0s, single: mean(sel), model, fc: null }
 }
 
 /**
@@ -123,13 +125,13 @@ function chain(items: StackItem[], lib: Library): { leaves: Leaf[]; gaps: Gap[];
  */
 export function tlStack(items: TlItem[], lib: Library): TlResult {
   const absorbers = items.filter((i): i is Absorber => i.kind === 'absorber')
-  const base = tlStructure(
-    items.filter((i): i is StackItem => i.kind !== 'absorber'),
-    lib,
-  )
+  const structure = items.filter((i): i is StackItem => i.kind !== 'absorber')
+  const fcs = chain(structure, lib).leaves.map((l) => l.fc).filter(Number.isFinite)
+  const fc = fcs.length > 0 ? Math.min(...fcs) : null
+  const base = { ...tlStructure(structure, lib), fc }
   if (absorbers.length === 0) return base
   const thirds = base.thirds.map((tl, i) => tl + absorbers.reduce((a, ab) => a + absorberInsertion(ab, THIRD_OCTAVES[i]), 0))
-  return summarize(thirds, base.f0s, `${base.model} with ${TL_MODEL_LABEL.absorber}`)
+  return { ...summarize(thirds, base.f0s, `${base.model} with ${TL_MODEL_LABEL.absorber}`), fc }
 }
 
 function tlStructure(items: StackItem[], lib: Library): TlResult {

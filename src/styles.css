@@ -199,3 +199,33 @@ aside.doorside .collisions p{margin:2px 0}
 .doorstage{grid-template-rows:auto 1fr}
 .wallview{display:grid;height:340px;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:12px}
 .card.editing{border-color:var(--accent)}
+/* walls acoustics charts */
+.ochart{position:relative}
+.ochart svg{max-width:none;min-height:280px;touch-action:none}
+.c-over{fill:var(--warn);opacity:.12}
+.c-band{fill:var(--ink);opacity:.06}
+.c-blabel{fill:var(--ink-2);font-size:12px}
+.c-axlabel{fill:var(--ink-2);font-size:12px}
+.ochart .c-tick{font-size:12px}
+.ochart .c-mlabel{font-size:11px;paint-order:stroke;stroke:var(--bg);stroke-width:3px}
+.ochart .c-line{stroke-linejoin:round;stroke-linecap:round}
+.ochart .c-line.c-dashed{stroke-width:2;stroke-dasharray:6 4}
+.ochart .c-marker{stroke-width:1.25;stroke-dasharray:3 4;opacity:.8}
+.c-target{stroke:var(--warn);stroke-width:1.5;stroke-dasharray:8 4}
+.c-cross{stroke:var(--ink-3);stroke-width:1}
+.c-dot{stroke:var(--bg);stroke-width:2}
+.c-tip{position:absolute;top:8px;pointer-events:none;background:var(--bg);border:1px solid var(--line-strong);border-radius:6px;padding:6px 8px;font-size:12px;box-shadow:0 2px 8px oklch(0.24 0.01 80 / .12);max-width:300px;z-index:2}
+.c-tip div{display:flex;gap:6px;align-items:center;margin-top:3px}
+.c-tip .tl{flex:1;color:var(--ink-2)}
+.c-tip .sw,.stacktable .sw{display:inline-block;width:10px;height:10px;border-radius:2px;flex:none}
+.stacktable .sw{margin-right:8px}
+.stacktable td:first-child{color:var(--ink)}
+.stacktable{margin:12px 0}
+.chart-legend{flex-wrap:wrap;margin:6px 0}
+.chart-legend span{display:inline-flex;align-items:center}
+.cellhint{flex-basis:100%;margin:0}
+.wallview{height:280px}
+.wallsstage{min-width:0}
+.wallsstage .card{min-width:0}
+.c-tip .tl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stacktable{font-size:12.5px}
