@@ -15,7 +15,7 @@ export type Range = [number, number]
 export type Rect = [Range, Range]
 /** L edges run along the length (at the low and high end of the width axis), W edges along the width. */
 export type PanelEdge = 'L1' | 'L2' | 'W1' | 'W2'
-export type JointKind = 'butt' | 'rebate' | 'mitre'
+export type JointKind = 'butt' | 'mitre'
 
 export type BoxPanel = {
   wall: WallId
@@ -132,7 +132,7 @@ function reach(w: WallId, a: Axis, rule: 'sides-past' | 'tops-past'): 'outer' | 
  * - sides-past / tops-past: each wall's laminate is one panel shape, butted by the rule.
  * - rebate: a staggered lap of separately cut layers (no machining). Layer ring j is the j-th layer of every
  *   wall; even rings follow sides-past, odd rings tops-past, each against the same ring of its neighbours.
- *   A wall with a single layer is plain sides-past; the cut list notes the router rebate.
+ *   A wall with a single layer has only ring 0, so it is plain sides-past (`hasSingleLayerBox` drives a UI hint).
  * - mitre: every layer runs to the box's outer face, with its mitred ends tapering inward (45 degrees for
  *   equal thicknesses). min/max are the layer's own outer face; `taper` sets the inner face in.
  */
@@ -199,8 +199,7 @@ export function wallBoxes(d: Design, lib: Library): BoxPanel[] {
         for (const [edge, a, end] of edges) {
           const nb = AXIS_WALLS[a][end]
           if (sh[nb][k].t <= 0) continue
-          const routed = d.joint === 'rebate' && share.layers.length === 1 && nAxis === 'x' && wallNormal(nb) === 'y'
-          const kind: JointKind = d.joint === 'mitre' ? 'mitre' : routed ? 'rebate' : 'butt'
+          const kind: JointKind = d.joint === 'mitre' ? 'mitre' : 'butt'
           joinedEdges.push({ edge, kind })
           if (kind === 'mitre') taper[edge] = [0, l.thickness * rate[a]![end]]
         }
@@ -229,8 +228,13 @@ export function wallBoxes(d: Design, lib: Library): BoxPanel[] {
   return panels
 }
 
-/** Bevel of a mitred edge, degrees from the face: 45 when the two walls are equally thick. */
+/** Saw blade tilt for a mitred edge, degrees from the face normal: 45 when the two walls are equally thick. */
 export const mitreAngle = (p: BoxPanel, e: PanelEdge): number => (Math.atan(p.taper[e][1] / p.thickness) * 180) / Math.PI
+
+/** Whether any wall's share of any box is a single layer: a rebate (staggered lap) needs two to interlock. */
+export function hasSingleLayerBox(d: Design): boolean {
+  return WALLS.some((w) => leafGroups(wallStack(d, w)).some((g) => g.filter((l) => l.thickness > 0).length === 1))
+}
 
 /** Box label of a panel: the outermost box is the shell, the innermost (when there are several) the liner. */
 export function boxPart(boxIndex: number, boxes: number): 'shell' | 'liner' | 'middle' {

@@ -2,6 +2,7 @@ import { signal } from '@preact/signals'
 import { Fragment } from 'preact'
 import { useState } from 'preact/hooks'
 import { escape, OCTAVES, THIRD_OCTAVES, tlStack } from '../../acoustics/tl'
+import { hasSingleLayerBox } from '../../geometry/boxes'
 import { stackThickness, WALLS, wallStack } from '../../geometry/walls'
 import type { Gap, JointType, Layer, StackItem, WallId } from '../../model/schema'
 import { addLayer, canInsertGapAt, firstFreeBoundary, insertGap, moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
@@ -173,25 +174,30 @@ const JOINTS: { id: JointType; label: string; shapes: string[] }[] = [
 function JointPicker() {
   const joint = design.value.joint
   return (
-    <div class="joints" role="radiogroup" aria-label="Joint type">
-      {JOINTS.map((j) => (
-        <button
-          type="button"
-          role="radio"
-          aria-checked={j.id === joint}
-          key={j.id}
-          class={`joint ${j.id === joint ? 'sel' : ''}`}
-          onClick={() => update((d) => void (d.joint = j.id))}
-        >
-          <svg viewBox="0 0 56 46" aria-hidden="true">
-            {j.shapes.map((p, k) => (
-              <polygon key={k} points={p} class="p" />
-            ))}
-          </svg>
-          {j.label}
-        </button>
-      ))}
-    </div>
+    <>
+      <div class="joints" role="radiogroup" aria-label="Joint type">
+        {JOINTS.map((j) => (
+          <button
+            type="button"
+            role="radio"
+            aria-checked={j.id === joint}
+            key={j.id}
+            class={`joint ${j.id === joint ? 'sel' : ''}`}
+            onClick={() => update((d) => void (d.joint = j.id))}
+          >
+            <svg viewBox="0 0 56 46" aria-hidden="true">
+              {j.shapes.map((p, k) => (
+                <polygon key={k} points={p} class="p" />
+              ))}
+            </svg>
+            {j.label}
+          </button>
+        ))}
+      </div>
+      {joint === 'rebate' && hasSingleLayerBox(design.value) && (
+        <p class="hint">Rebate needs at least two layers; single-layer walls are built sides past</p>
+      )}
+    </>
   )
 }
 

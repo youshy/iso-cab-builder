@@ -86,11 +86,6 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
     a: p.max[p.lengthAxis] - p.min[p.lengthAxis],
     b: p.max[p.widthAxis] - p.min[p.widthAxis],
   })
-  /** A single-layer wall in a rebate-jointed box: the side panels are routed to take the top and bottom. */
-  const rebateNote = (p: BoxPanel): string[] =>
-    p.joinedEdges.some((e) => e.kind === 'rebate')
-      ? [`single layer: router rebate ${num(p.thickness / 2)} × ${num(p.thickness)} on top/bottom edges`]
-      : []
   const doorNote = (p: BoxPanel): string[] => {
     if (p.wall !== dw) return []
     if (door.kind === 'wall') return ['hinged wall: see doors step']
@@ -111,7 +106,7 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
       name: `${cap(p.wall)} ${rest}`, wall: p.wall, rest,
       materialId: p.materialId, thickness: p.thickness, a, b, step: part,
       bevels: p.joinedEdges.filter((e) => e.kind === 'mitre').map((e) => ({ edge: e.edge, angle: mitreAngle(p, e.edge) })),
-      notes: [...rebateNote(p), ...doorNote(p)],
+      notes: doorNote(p),
     })
     // Decoupling of an inner box from the box outside it, once per wall and box.
     const key = `${p.wall} ${p.boxIndex}`

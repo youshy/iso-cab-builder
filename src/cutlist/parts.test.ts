@@ -85,14 +85,14 @@ describe('buildParts joints', () => {
     expect(ps.some((p) => p.notes.join(' ').includes('rebate'))).toBe(false)
   })
 
-  it('rebate with a single layer: sides-past with a router rebate note on the sides', () => {
+  it('rebate with a single layer: plain sides-past, no rebate note', () => {
     const d = base()
     d.joint = 'rebate'
     d.wallDefault = [{ kind: 'layer', materialId: 'plywood', thickness: 18 }]
     const ps = parts(d).parts
     const side = named(ps, /^Left\/Right shell/)[0]
     expect(dims(side)).toEqual([1036, 486])
-    expect(side.notes).toContain('single layer: router rebate 9 × 18 on top/bottom edges')
+    expect(side.notes).toEqual([])
     expect(dims(named(ps, /^Top\/Bottom shell/)[0])).toEqual([1400, 486])
     expect(named(ps, /^Top\/Bottom shell/)[0].notes).toEqual([])
   })

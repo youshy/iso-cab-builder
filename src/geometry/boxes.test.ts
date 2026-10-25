@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDesign, defaultLibrary } from '../model/defaults'
 import type { Axis, Design, StackItem } from '../model/schema'
-import { boxBounds, wallBoxes, type BoxPanel } from './boxes'
+import { boxBounds, hasSingleLayerBox, wallBoxes, type BoxPanel } from './boxes'
 
 const lib = defaultLibrary()
 const base = (): Design => {
@@ -117,6 +117,20 @@ describe('wallBoxes', () => {
     expect([range(tMdf, 'x'), range(tMdf, 'z')]).toEqual([[-18, 1418], [-18, 468]])
     expect([range(bMdf, 'x'), range(bMdf, 'y')]).toEqual([[0, 1400], [0, 1000]])
     expect(ps.every((p) => p.joinedEdges.every((e) => e.kind === 'butt'))).toBe(true)
+  })
+
+  it('single layer rebate: plain sides-past butts, flagged for the joint hint', () => {
+    const d = base()
+    d.joint = 'rebate'
+    expect(hasSingleLayerBox(d)).toBe(false)
+    d.wallOverrides.top = [{ kind: 'layer', materialId: 'plywood', thickness: 18 }]
+    expect(hasSingleLayerBox(d)).toBe(true)
+    delete d.wallOverrides.top
+    d.wallDefault = gapStack()
+    expect(hasSingleLayerBox(d)).toBe(true)
+    const ps = wallBoxes(d, lib)
+    expect(ps.every((p) => p.joinedEdges.every((e) => e.kind === 'butt'))).toBe(true)
+    expect(range(of(ps, 'top', 1)[0], 'x')).toEqual([0, 1400])
   })
 
   it('door wall: outer cutout on the outer box, inner cutout on the liner box; wall door has none', () => {
