@@ -222,7 +222,7 @@ describe('buildSheets content', () => {
     d.dims.outer = { x: 9000, y: 2400, z: 1200 }
     const { sheets } = sheetsOf(d)
     const shell = sheets.find((s) => s.step === 'shell')!
-    expect(shell.svg).toContain('NOT TO SCALE')
+    expect(sheets.filter((s) => s.step === 'shell').some((s) => s.svg.includes('NOT TO SCALE'))).toBe(true)
     expect(shell.warnings.join(' ')).toMatch(/not to scale/)
     expect(sheetsOf(structuredClone(defaultDesign())).sheets.every((x) => x.warnings.length === 0)).toBe(true)
   })
@@ -239,6 +239,19 @@ describe('buildSheets content', () => {
       expect(s.svg).toContain('2026-10-25')
       expect(s.svg).toContain('All dimensions mm')
     })
+  })
+
+  it('title block carries a 100 mm print scale check bar with 10 mm ticks', () => {
+    for (const s of sheetsOf(twoCavities()).sheets) {
+      const bar = s.svg.match(/<line class="o" data-scale-check="100" x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)"\/>/)
+      expect(bar, s.title).not.toBeNull()
+      const [x1, y1, x2, y2] = bar!.slice(1).map(Number)
+      expect([x2 - x1, y2 - y1]).toEqual([100, 0])
+      const ticks = [...s.svg.matchAll(/<line class="o" data-scale-tick="1" x1="([\d.]+)"/g)].map((m) => Number(m[1]) - x1)
+      expect(ticks).toEqual([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+      expect(s.svg).toContain('100 mm at 1:1 on paper: measure to check print scale')
+      expect(s.svg).not.toContain('—')
+    }
   })
 
   it('scale is the largest of 1:5, 1:10, 1:20 that fits', () => {

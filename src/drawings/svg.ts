@@ -146,7 +146,9 @@ export const textWidth = (s: string, size: number): number => s.length * size * 
 
 export const SHEET = { w: 420, h: 297 }
 const BORDER = 10
-const TITLE = { w: 160, h: 32 }
+const TITLE = { w: 160, h: 42 }
+/** Length of the print scale check bar, mm on paper. */
+const CHECK_BAR = 100
 /** Area free for drawings: inside the border, above the title block row. */
 export const AREA = { x: 14, y: 14, w: SHEET.w - 28, h: SHEET.h - BORDER - TITLE.h - 2 - 14 }
 const GAP = 6
@@ -234,6 +236,22 @@ export type Frame = {
   notes: string[]
 }
 
+/** Bottom row of the title block: a bar CHECK_BAR mm long with 10 mm ticks, to measure on the print. */
+function scaleCheck(tx: number, y: number, t: (x: number, y: number, s: string, size: number) => string): string {
+  const x0 = tx + 3, bar = y + 3.5
+  const ticks = Array.from({ length: CHECK_BAR / 10 + 1 }, (_, i) => {
+    const x = x0 + i * 10
+    const top = i % 5 === 0 ? bar - 2 : bar - 1.2
+    return `<line class="o" data-scale-tick="1" x1="${n2(x)}" y1="${n2(top)}" x2="${n2(x)}" y2="${n2(bar)}"/>`
+  })
+  return [
+    `<line class="o" x1="${tx}" y1="${y}" x2="${tx + TITLE.w}" y2="${y}"/>`,
+    `<line class="o" data-scale-check="${CHECK_BAR}" x1="${n2(x0)}" y1="${n2(bar)}" x2="${n2(x0 + CHECK_BAR)}" y2="${n2(bar)}"/>`,
+    ...ticks,
+    t(x0, y + 8, `${CHECK_BAR} mm at 1:1 on paper: measure to check print scale`, 2.2),
+  ].join('')
+}
+
 /** The A3 sheet: border, drawings, notes and title block. */
 export function sheetSvg(f: Frame, placed: Placed[]): string {
   const body = placed.map((p) => `<g transform="translate(${n2(p.x)} ${n2(p.y)})">${p.block.svg}</g>`).join('')
@@ -253,6 +271,7 @@ export function sheetSvg(f: Frame, placed: Placed[]): string {
     t(tx + 83, ty + 19, `Sheet ${f.sheet}/${f.sheets}`, 2.6),
     t(tx + 83, ty + 24, `Scale 1:${f.scaleN}`, 2.6),
     t(tx + 83, ty + 29, 'Print at 100% on A3', 2.6),
+    scaleCheck(tx, ty + 32, t),
   ].join('')
   const notes = f.notes.map((n, i) => t(BORDER + 4, ty + 5 + i * 4, n, 2.5)).join('')
   return [
