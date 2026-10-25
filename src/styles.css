@@ -172,3 +172,7 @@ aside.interiorside summary .unit{font-weight:400;margin-left:6px}
 .section .sv-layer.sel{stroke:var(--accent);stroke-width:1.5}
 .section .sv-flabel{fill:var(--accent)}
 .readout{margin-top:12px}
+/* 3D view */
+.view3d{flex:1;min-height:0;width:100%;overflow:hidden}
+.view3dmode{position:absolute;top:6px;right:8px;z-index:1}
+.view3dpanel .lbl{z-index:1}

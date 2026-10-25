@@ -12,6 +12,7 @@ import type { Axis, Design, Facet, InnerPanel, SurfaceRef, Treatment, WallId } f
 import { compareDesign, design, fmtLen, library, update } from '../../model/store'
 import { NumberField } from '../NumberField'
 import { SectionView } from '../views/SectionView'
+import { View3DPanel } from '../views/View3D'
 import { Seg } from '../Seg'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
@@ -29,7 +30,7 @@ const NET: [WallId, number, number][] = [
 
 const picked = signal<WallId | null>(null)
 const widthErr = signal<{ wall: WallId; index: number } | null>(null)
-const showFront = signal<'both' | 'plan' | 'front' | 'side'>('both')
+const showFront = signal<'both' | 'planfront' | 'plan' | 'front' | 'side' | '3d'>('both')
 const exaggerate = signal(true)
 
 /** A wall edit; clears the stale width error. */
@@ -356,7 +357,7 @@ export function InteriorStep() {
   const free = resolveDims(d).free
   const cmp = compareDesign.value
   const mode = showFront.value
-  const single = mode !== 'both'
+  const single = mode !== 'both' && mode !== 'planfront'
   const viewOf = (v: 'plan' | 'front' | 'side', label: string) => (
     <div class="view" key={v}>
       <span class="lbl">{label}</span>
@@ -388,7 +389,7 @@ export function InteriorStep() {
           <Seg
             label="Views"
             value={mode}
-            options={[['both', 'Plan + front'], ['plan', 'Plan'], ['front', 'Front'], ['side', 'Side']]}
+            options={[['both', 'Plan + 3D'], ['planfront', 'Plan + front'], ['plan', 'Plan'], ['front', 'Front'], ['side', 'Side'], ['3d', '3D']]}
             onPick={(v) => (showFront.value = v)}
           />
           <label class="ctl">
@@ -402,9 +403,16 @@ export function InteriorStep() {
           {mode === 'both' && (
             <>
               {viewOf('plan', 'Plan section, cut at mid-height')}
+              <View3DPanel design={d} highlight={w} />
+            </>
+          )}
+          {mode === 'planfront' && (
+            <>
+              {viewOf('plan', 'Plan section, cut at mid-height')}
               {viewOf('front', 'Front section')}
             </>
           )}
+          {mode === '3d' && <View3DPanel design={d} highlight={w} />}
           {mode === 'plan' && viewOf('plan', 'Plan section, cut at mid-height')}
           {mode === 'front' && viewOf('front', 'Front section')}
           {mode === 'side' && viewOf('side', 'Side section')}
