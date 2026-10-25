@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { curveFrom, defaultSlices, findSlice, medianDb, modeDelta, nearestAnalytic, strongestModes } from '../../acoustics/compare'
 import type { SimResult, SimSlice } from '../../acoustics/fdtd'
-import { currentClient, customSlice } from '../../acoustics/schedule'
+import { firstModes } from '../../acoustics/analytic'
+import { compareClient, currentClient, customSlice, sliceClient } from '../../acoustics/schedule'
 import { resolveDims } from '../../geometry/dimensions'
 import type { Axis } from '../../model/schema'
 import { basedOn, compareVersion, design, simCompare, simCurrent, sliceRequest, units, update } from '../../model/store'
@@ -160,7 +161,11 @@ export function AcousticsStep() {
         ) : (
           <p class="hint">Waiting for the first result.</p>
         )}
-        {compareVersion.value !== null && !cmp && <p class="hint">Simulating v{compareVersion.value} with the same settings.</p>}
+        {compareVersion.value !== null && !cmp && (
+          compareClient.error.value
+            ? <p class="warn">Compare failed: {compareClient.error.value}</p>
+            : <p class="hint">Simulating v{compareVersion.value} with the same settings.</p>
+        )}
         <h3>Modes</h3>
         {!cur ? null : modes.length === 0 ? (
           <p class="hint">{NO_MODES}</p>
@@ -193,6 +198,21 @@ export function AcousticsStep() {
             </tbody>
           </table>
         )}
+        <h4>Reference: rectangular room modes of the empty inner box</h4>
+        <table class="modetable num">
+          <thead>
+            <tr><th>Frequency</th><th>Mode (x,y,z)</th><th>Kind</th></tr>
+          </thead>
+          <tbody>
+            {firstModes(resolveDims(d).inner).map((m) => (
+              <tr key={m.n.join(',')}>
+                <td>{m.f.toFixed(1)} Hz</td>
+                <td>{m.n.join(',')}</td>
+                <td>{m.kind}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
         <h3>Pressure at {req ? `${req.f} Hz` : '...'}</h3>
         {slice ? (
           <div class="slicebox">
@@ -208,7 +228,9 @@ export function AcousticsStep() {
             </div>
           </div>
         ) : (
-          <p class="hint">{req ? 'Map updating. A new plane, position or frequency takes one extra run, in the background.' : 'Waiting for the first result.'}</p>
+          req && !findSlice(cur?.slices, req) && sliceClient.error.value
+            ? <p class="warn">Map failed: {sliceClient.error.value}</p>
+            : <p class="hint">{req ? 'Map updating. A new plane, position or frequency takes one extra run, in the background.' : 'Waiting for the first result.'}</p>
         )}
       </section>
     </>

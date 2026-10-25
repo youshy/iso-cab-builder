@@ -279,7 +279,7 @@ function buildRows(): GroupRow[] {
   return rows
 }
 
-const hz = (f: number | null) => (f === null ? '—' : `${Math.round(f)}`)
+const hz = (f: number | null) => (f === null ? 'n/a' : `${Math.round(f)}`)
 
 function WallTlChart({ rows }: { rows: GroupRow[] }) {
   const v = compareVersion.value
@@ -337,10 +337,10 @@ function SummaryTable({ rows }: { rows: GroupRow[] }) {
             </td>
             <td class="num">{Math.round(r.thickness)}</td>
             <td class="num">{r.mass.toFixed(1)}</td>
-            <td class="num">{r.tl.f0s.length > 0 ? r.tl.f0s.map((f) => hz(f)).join(', ') : '—'}</td>
+            <td class="num">{r.tl.f0s.length > 0 ? r.tl.f0s.map((f) => hz(f)).join(', ') : 'n/a'}</td>
             <td class="num">{hz(r.tl.fc)}</td>
             <td class="num">{r.tl.single.toFixed(1)}</td>
-            <td class={`num ${r.delta !== null && r.delta < 0 ? 'neg' : ''}`}>{r.delta === null ? '—' : `${r.delta > 0 ? '+' : ''}${r.delta.toFixed(1)}`}</td>
+            <td class={`num ${r.delta !== null && r.delta < 0 ? 'neg' : ''}`}>{r.delta === null ? 'n/a' : `${r.delta > 0 ? '+' : ''}${r.delta.toFixed(1)}`}</td>
           </tr>
         ))}
       </tbody>

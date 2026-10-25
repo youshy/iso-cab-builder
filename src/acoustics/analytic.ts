@@ -26,3 +26,14 @@ export function rectModes(inner: Vec3, fMax: number, c = 343): Mode[] {
       }
   return out.sort((a, b) => a.f - b.f);
 }
+
+/** The lowest `count` rigid-wall modes of a rectangular box (`inner` in mm), however high they lie. */
+export function firstModes(inner: Vec3, count = 15, c = 343): Mode[] {
+  let fMax = 500;
+  let modes = rectModes(inner, fMax, c);
+  while (modes.length < count && fMax < 1e6) {
+    fMax *= 2;
+    modes = rectModes(inner, fMax, c);
+  }
+  return modes.slice(0, count);
+}

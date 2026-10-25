@@ -122,7 +122,8 @@ function chain(items: StackItem[], lib: Library): { leaves: Leaf[]; gaps: Gap[];
 
 /**
  * TL of a stack. Leaves and cavities set the model (mass law, Sharp, generalised Sharp); each absorber
- * then adds its own insertion term (see absorberInsertion) and the model label names it.
+ * then adds its own insertion term (see absorberInsertion), together at most ABSORBER_TL_CAP, and the
+ * model label names it.
  */
 export function tlStack(items: TlItem[], lib: Library): TlResult {
   const absorbers = items.filter((i): i is Absorber => i.kind === 'absorber')
@@ -131,7 +132,8 @@ export function tlStack(items: TlItem[], lib: Library): TlResult {
   const fc = fcs.length > 0 ? Math.min(...fcs) : null
   const base = { ...tlStructure(structure, lib), fc }
   if (absorbers.length === 0) return base
-  const thirds = base.thirds.map((tl, i) => tl + absorbers.reduce((a, ab) => a + absorberInsertion(ab, THIRD_OCTAVES[i]), 0))
+  const thirds = base.thirds.map((tl, i) =>
+    tl + Math.min(absorbers.reduce((a, ab) => a + absorberInsertion(ab, THIRD_OCTAVES[i]), 0), ABSORBER_TL_CAP))
   return { ...summarize(thirds, base.f0s, `${base.model} with ${TL_MODEL_LABEL.absorber}`), fc }
 }
 
@@ -324,7 +326,7 @@ export function absorberInsertion(ab: Absorber, f: number): number {
 
 /**
  * Wall stack as built, outside-in: the wall layers, then for active facets a cavity of their mean
- * packing depth (packers bridge it, so strips) and the facet panel, then one absorber per treatment.
+ * packing depth (packers bridge it, so strips) and the facet panel, then one absorber per treatment material.
  */
 export function effectiveWallStack(d: Design, lib: Library, w: WallId): TlItem[] {
   const out: TlItem[] = [...wallStack(d, w)]
@@ -341,8 +343,14 @@ export function effectiveWallStack(d: Design, lib: Library, w: WallId): TlItem[]
       { kind: 'layer', materialId: wi.panelMaterialId, thickness: wi.panelThickness },
     )
   }
-  for (const t of wallTreatments(d, w)) out.push({ kind: 'absorber', materialId: t.materialId, thickness: t.thickness })
-  return out
+  // One absorber per material: two layers of the same stuff act as one thicker layer.
+  const absorbers: Absorber[] = []
+  for (const t of wallTreatments(d, w)) {
+    const same = absorbers.find((a) => a.materialId === t.materialId)
+    if (same) same.thickness += t.thickness
+    else absorbers.push({ kind: 'absorber', materialId: t.materialId, thickness: t.thickness })
+  }
+  return [...out, ...absorbers]
 }
 
 /** Sound lock as one stack: outer leaf, between space, inner leaf. Null for a whole-wall door. */

@@ -275,6 +275,24 @@ describe('as-built stacks', () => {
     })
     expect(absorberInsertion(thick, 4000)).toBe(15)
   })
+  it('same-material treatments on a wall merge into one absorber; the total is capped at 15 dB', () => {
+    const d = defaultDesign()
+    d.treatments = [
+      { id: 'a', surface: { wall: 'back' }, materialId: 'rockwool', thickness: 50 },
+      { id: 'b', surface: { wall: 'back' }, materialId: 'foam', thickness: 30 },
+      { id: 'c', surface: { wall: 'back' }, materialId: 'rockwool', thickness: 50 },
+    ]
+    const abs = effectiveWallStack(d, lib, 'back').filter((i) => i.kind === 'absorber')
+    expect(abs).toEqual([
+      { kind: 'absorber', materialId: 'rockwool', thickness: 100 },
+      { kind: 'absorber', materialId: 'foam', thickness: 30 },
+    ])
+    const bare = tlStack(wallStack(d, 'back'), lib).thirds
+    const many = Array.from({ length: 6 }, (_, k) => ({ kind: 'absorber' as const, materialId: k % 2 ? 'foam' : 'rockwool', thickness: 300 }))
+    const built = tlStack([...wallStack(d, 'back'), ...many], lib).thirds
+    built.forEach((tl, i) => expect(tl - bare[i]).toBeLessThanOrEqual(15 + 1e-9))
+    expect(Math.max(...built.map((tl, i) => tl - bare[i]))).toBeCloseTo(15, 6)
+  })
   it('door stack: dual is outer leaf, between space, inner leaf; wall mode has none', () => {
     const d = defaultDesign()
     const s = doorStack(d, lib)!

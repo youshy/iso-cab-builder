@@ -164,6 +164,7 @@ export function createSimClient(spawn: () => Worker, options: ClientOptions = {}
     const hit = cache.get(key)
     if (hit) {
       remember(key, hit)
+      error.value = null
       status.value = 'up to date'
       return Promise.resolve(hit)
     }

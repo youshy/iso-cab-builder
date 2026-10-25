@@ -57,6 +57,25 @@ function tryPlace(sheets: SheetState[], it: Item, kerf: number): boolean {
 const fits = (it: Item, st: SheetStock) =>
   (it.length <= st.length && it.width <= st.width) || (it.width <= st.length && it.length <= st.width)
 
+/** Packs the items onto as many sheets of one stock size as needed; parts bigger than the sheet are misfits. */
+function packOn(items: Item[], stock: SheetStock, kerf: number): { sheets: SheetState[]; used: number; misfits: Item[] } {
+  const sheets: SheetState[] = []
+  const misfits: Item[] = []
+  let used = 0
+  for (const it of items.slice().sort((a, b) => b.length * b.width - a.length * a.width)) {
+    if (!fits(it, stock)) {
+      misfits.push(it)
+      continue
+    }
+    if (!tryPlace(sheets, it, kerf)) {
+      sheets.push({ placements: [], free: [{ x: 0, y: 0, w: stock.length, h: stock.width }] })
+      tryPlace(sheets, it, kerf)
+    }
+    used += it.length * it.width
+  }
+  return { sheets, used, misfits }
+}
+
 export function nest(parts: Part[], shop: Shop): NestResult {
   const unplaced: NestResult['unplaced'] = []
   const byGroup = new Map<string, { materialId: string; thickness: number; items: Item[] }>()
@@ -81,21 +100,15 @@ export function nest(parts: Part[], shop: Shop): NestResult {
       for (const it of g.items) unplaced.push({ partId: it.partId, reason: 'no stock for material/thickness' })
       continue
     }
-    const stock = stocks.reduce((a, b) => (b.length * b.width > a.length * a.width ? b : a))
-    const sheets: SheetState[] = []
-    const items = g.items.slice().sort((a, b) => b.length * b.width - a.length * a.width)
-    let used = 0
-    for (const it of items) {
-      if (!fits(it, stock)) {
-        unplaced.push({ partId: it.partId, reason: 'larger than any sheet' })
-        continue
-      }
-      if (!tryPlace(sheets, it, shop.kerf)) {
-        sheets.push({ placements: [], free: [{ x: 0, y: 0, w: stock.length, h: stock.width }] })
-        tryPlace(sheets, it, shop.kerf)
-      }
-      used += it.length * it.width
-    }
+    // Try every stock size: the one that places the most parts in the least sheet area wins, smallest first on ties.
+    const runs = stocks
+      .slice()
+      .sort((a, b) => a.length * a.width - b.length * b.width)
+      .map((st) => ({ stock: st, ...packOn(g.items, st, shop.kerf) }))
+    const area = (r: (typeof runs)[number]) => r.sheets.length * r.stock.length * r.stock.width
+    const best = runs.reduce((a, b) => (b.misfits.length < a.misfits.length || (b.misfits.length === a.misfits.length && area(b) < area(a)) ? b : a))
+    const { stock, sheets, used } = best
+    for (const it of best.misfits) unplaced.push({ partId: it.partId, reason: 'larger than any sheet' })
     if (!sheets.length) continue
     const total = sheets.length * stock.length * stock.width
     groups.push({

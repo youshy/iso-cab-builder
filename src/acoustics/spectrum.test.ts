@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { rectModes } from './analytic';
+import { firstModes, rectModes } from './analytic';
 import { spectrum, findPeaks } from './spectrum';
+
+describe('firstModes', () => {
+  it('gives the lowest 15 modes whatever the box size, matching rectModes', () => {
+    const box = { x: 1000, y: 600, z: 400 };
+    const m = firstModes(box);
+    expect(m).toHaveLength(15);
+    expect(m).toEqual(rectModes(box, m[14].f + 1e-6).slice(0, 15));
+    expect(firstModes({ x: 100, y: 80, z: 60 })).toHaveLength(15); // first mode above 1.7 kHz
+  });
+});
 
 describe('rectModes', () => {
   it('lists the lowest modes of a 1000x600x400 mm box', () => {

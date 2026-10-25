@@ -81,6 +81,19 @@ describe('nest', () => {
     const r = nest([part({ qty: 4 })], shop())
     expect(r.groups[0].wastePct).toBe(Math.round((100 - (100 * 4 * 1200 * 600) / (2440 * 1220)) * 10) / 10)
   })
+  it('with several stock sizes, uses the smallest that holds the parts', () => {
+    const sh = shop()
+    sh.sheets.push({ materialId: 'ply', thickness: 18, length: 1220, width: 610 }, { materialId: 'ply', thickness: 18, length: 3050, width: 1525 })
+    const small = nest([part({ length: 1200, width: 600 })], sh)
+    expect(small.groups[0].stock).toMatchObject({ length: 1220, width: 610 })
+    // Too big for the half sheet: the full sheet, not the jumbo one.
+    const mid = nest([part({ length: 2000, width: 1000 })], sh)
+    expect(mid.groups[0].stock).toMatchObject({ length: 2440, width: 1220 })
+    expect(mid.unplaced).toEqual([])
+    // Only the jumbo sheet takes this one.
+    expect(nest([part({ length: 3000, width: 1500 })], sh).groups[0].stock).toMatchObject({ length: 3050 })
+  })
+
   it('default design nests without overlap', () => {
     const s = defaultShop()
     const r = nest(buildParts(defaultDesign(), defaultLibrary(), s).parts, s)

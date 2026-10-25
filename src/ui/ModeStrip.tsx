@@ -33,7 +33,9 @@ export function ModeStrip({ onOpenAcoustics }: { onOpenAcoustics: () => void }) 
       <div class="status" role="status">
         <span class={`dot ${dot}`} />
         Simulation {statusText(status, c.progress.value, c.runtimeMs.value)}
-        {comparing && <span> · comparing…</span>}
+        {comparing && (compareClient.error.value
+          ? <span class="u"> · compare failed: {compareClient.error.value}</span>
+          : <span> · comparing…</span>)}
         {c.error.value && <span class="u"> · failed: {c.error.value}</span>}
       </div>
       <div class="mlist num">
