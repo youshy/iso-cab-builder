@@ -13,7 +13,7 @@ export const OCTAVES = [125, 250, 500, 1000, 2000, 4000]
 export const TL_MODEL_LABEL = {
   single: 'Mass law estimate',
   double: 'Sharp double-leaf estimate',
-  multi: 'Multi-leaf transfer-matrix estimate',
+  multi: 'Multi-leaf estimate (Sharp generalised)',
 } as const
 
 const C = 343
@@ -80,38 +80,40 @@ function summarize(thirds: number[], f0s: number[], model: string): TlResult {
  * cavities either side of them merge (widths add, the first cavity's settings kept); cavities at a
  * face are dropped. Valid stacks never need this, it keeps raw input from producing nonsense.
  */
-function chain(items: StackItem[], lib: Library): { leaves: Leaf[]; gaps: Gap[] } {
+function chain(items: StackItem[], lib: Library): { leaves: Leaf[]; gaps: Gap[]; layers: Layer[][] } {
   const groups = leafGroups(items)
   const gs = cavities(items)
   const leaves: Leaf[] = []
+  const layers: Layer[][] = []
   const gaps: Gap[] = []
   let pending: Gap | null = null
   groups.forEach((g, k) => {
     if (g.length > 0) {
       if (pending && leaves.length > 0) gaps.push(pending)
       leaves.push(leaf(g, lib))
+      layers.push(g)
       pending = null
     }
     const next = gs[k]
     if (next) pending = pending ? { ...pending, width: pending.width + next.width } : next
   })
-  return { leaves, gaps }
+  return { leaves, gaps, layers }
 }
 
 export function tlStack(items: StackItem[], lib: Library): TlResult {
-  const { leaves, gaps } = chain(items, lib)
+  const { leaves, gaps, layers } = chain(items, lib)
   if (gaps.length === 0) {
     const l = leaves[0] ?? { m: 0, fc: Infinity, eta: 0 }
     return summarize(THIRD_OCTAVES.map((f) => tlLeaf(l, f)), [], TL_MODEL_LABEL.single)
   }
-  if (gaps.length >= 2) return multiLeaf(leaves, gaps)
+  if (gaps.length >= 2) return multiLeaf(leaves, gaps, equivalentDouble(layers, gaps, lib))
   return sharp(leaves[0], leaves[1], gaps[0])
 }
 
-/** Transfer-matrix estimate for any stack with at least one cavity (exported for cross-checks). */
-export function tlChain(items: StackItem[], lib: Library): TlResult {
+/** Mass-air-mass resonances of the stack from the transfer-matrix chain (exported to cross-check Sharp's f0). */
+export function chainF0s(items: StackItem[], lib: Library): number[] {
   const { leaves, gaps } = chain(items, lib)
-  return gaps.length ? multiLeaf(leaves, gaps) : tlStack(items, lib)
+  return gaps.length ? chainResonances(leaves, gaps) : []
 }
 
 function sharp(l1: Leaf, l2: Leaf, gap: Gap): TlResult {
@@ -129,24 +131,21 @@ function sharp(l1: Leaf, l2: Leaf, gap: Gap): TlResult {
   return summarize(thirds, [f0], TL_MODEL_LABEL.double)
 }
 
-// ---- Multi-leaf transfer matrix --------------------------------------------------------------
-// Pressure/velocity transfer matrices at normal incidence (e^{jwt}). Each leaf group is a limp mass
-// [[1, jwm], [0, 1]]; each cavity an air layer [[cos kd, jZc sin kd], [j sin kd / Zc, cos kd]].
-// Insulation fill uses Delany-Bazley with flow resistivity 10 000 Pa s/m2 for every fill material;
-// an empty cavity is lossless air. Normal-incidence TL gets a -5 dB field-incidence correction, each
-// leaf's coincidence dip (tlLeaf below the mass law) is added, rigid strips take 3 dB per cavity above
-// the lowest resonance, and the result never drops below the mass law of the total mass.
+// ---- Multi-leaf (two or more cavities) -----------------------------------------------------------
+// TL is the lower of two estimates, floored at the total-mass mass law:
+//  (a) Sharp's double-leaf law generalised to N leaves: below the lowest resonance, mass law of the total
+//      mass; above it, the sum of each leaf's own TL (with coincidence) plus, per cavity, 20 lg(f d) - 29 up
+//      to fl = 55/d and +6 dB above it, less the per-cavity empty-fill and strips penalties of sharp().
+//  (b) the equivalent double leaf (outer group | all cavities as one | all other groups combined) by
+//      sharp(), plus 3 dB per extra cavity. This keeps extra leaves from gaining more than a few dB over a
+//      double wall of the same mass and depth, and keeps the step from one to two cavities small.
+// The transfer-matrix chain (normal incidence, limp leaves, lossless air) is used only to find the
+// mass-air-mass resonances f0s.
 
 type Cx = [number, number]
 const cx = (re: number, im = 0): Cx => [re, im]
 const add = (a: Cx, b: Cx): Cx => [a[0] + b[0], a[1] + b[1]]
 const mul = (a: Cx, b: Cx): Cx => [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]]
-const div = (a: Cx, b: Cx): Cx => {
-  const q = b[0] * b[0] + b[1] * b[1]
-  return [(a[0] * b[0] + a[1] * b[1]) / q, (a[1] * b[0] - a[0] * b[1]) / q]
-}
-const ccos = ([a, b]: Cx): Cx => [Math.cos(a) * Math.cosh(b), -Math.sin(a) * Math.sinh(b)]
-const csin = ([a, b]: Cx): Cx => [Math.sin(a) * Math.cosh(b), Math.cos(a) * Math.sinh(b)]
 type M2 = [Cx, Cx, Cx, Cx] // row-major
 const mmul = (a: M2, b: M2): M2 => [
   add(mul(a[0], b[0]), mul(a[1], b[2])),
@@ -155,55 +154,49 @@ const mmul = (a: M2, b: M2): M2 => [
   add(mul(a[2], b[1]), mul(a[3], b[3])),
 ]
 
-const RHO = 1.21
-const Z0 = RHO * C
-const FLOW_RESISTIVITY = 10_000 // Pa s/m2
-const FIELD_INCIDENCE = 5 // dB
-const RESONANCE_MAX = 5000 // Hz
+const Z0 = 1.21 * C
+const RESONANCE_MAX = 5000 // Hz, highest resonance reported
+const SCAN_MAX = 20000 // Hz, scan range so every mass-air-mass resonance is found before counting
 
-/** Characteristic impedance and wavenumber of a cavity at f. */
-function airLayer(f: number, filled: boolean): { zc: Cx; k: Cx } {
-  const w = 2 * Math.PI * f
-  if (!filled) return { zc: cx(Z0), k: cx(w / C) }
-  const X = (RHO * f) / FLOW_RESISTIVITY
-  return {
-    zc: [Z0 * (1 + 0.0571 * X ** -0.754), -Z0 * 0.087 * X ** -0.732],
-    k: [(w / C) * (1 + 0.0978 * X ** -0.7), -(w / C) * 0.189 * X ** -0.595],
-  }
-}
-
-/** Normal-incidence TL (dB) of the chain; `lossless` ignores fill damping (used to locate resonances). */
-function tlNormal(leaves: Leaf[], gaps: Gap[], f: number, lossless = false): number {
+/** Normal-incidence TL (dB) of the lossless chain of limp leaves and air layers. */
+function tlNormal(leaves: Leaf[], gaps: Gap[], f: number): number {
   const w = 2 * Math.PI * f
   let t: M2 = [cx(1), cx(0), cx(0), cx(1)]
   leaves.forEach((l, i) => {
     t = mmul(t, [cx(1), cx(0, w * l.m), cx(0), cx(1)])
     const g = gaps[i]
     if (!g) return
-    const { zc, k } = airLayer(f, !lossless && g.fill === 'insulation')
-    const kd = mul(k, cx(g.width / 1000))
-    const c = ccos(kd)
-    const sn = csin(kd)
-    t = mmul(t, [c, mul(cx(0, 1), mul(zc, sn)), div(mul(cx(0, 1), sn), zc), c])
+    const kd = (w / C) * (g.width / 1000)
+    const c = cx(Math.cos(kd))
+    t = mmul(t, [c, cx(0, Z0 * Math.sin(kd)), cx(0, Math.sin(kd) / Z0), c])
   })
-  const sum = add(add(t[0], t[3]), add(div(t[1], cx(Z0)), mul(t[2], cx(Z0))))
-  return 20 * Math.log10(Math.hypot(sum[0], sum[1]) / 2)
+  const re = t[0][0] + t[3][0] + t[1][0] / Z0 + t[2][0] * Z0
+  const im = t[0][1] + t[3][1] + t[1][1] / Z0 + t[2][1] * Z0
+  return 20 * Math.log10(Math.hypot(re, im) / 2)
 }
 
-/** Dips of the lossless chain from 20 Hz to 5 kHz: mass-air-mass and cavity standing-wave resonances. */
+/**
+ * Mass-air-mass resonances: the lowest dips of the chain, one per cavity, skipping cavity standing-wave
+ * dips (f = n c / 2d), reported up to 5 kHz.
+ */
 function chainResonances(leaves: Leaf[], gaps: Gap[]): number[] {
-  const N = 400
+  const N = 600
   const lo = Math.log(20)
-  const step = (Math.log(RESONANCE_MAX) - lo) / N
-  const tl = (x: number) => tlNormal(leaves, gaps, Math.exp(x), true)
+  const step = (Math.log(SCAN_MAX) - lo) / N
+  const tl = (x: number) => tlNormal(leaves, gaps, Math.exp(x))
   const ys = Array.from({ length: N + 1 }, (_, i) => tl(lo + i * step))
+  const standing = (f: number) =>
+    gaps.some((g) => {
+      const n = Math.round(f / (C / (2 * (g.width / 1000))))
+      return n >= 1 && Math.abs(f / (n * (C / (2 * (g.width / 1000)))) - 1) < 0.03
+    })
   const out: number[] = []
-  for (let i = 1; i < N; i++) {
+  for (let i = 1; i < N && out.length < gaps.length; i++) {
     if (!(ys[i] < ys[i - 1] && ys[i] <= ys[i + 1])) continue
     // golden-section refine inside the bracketing grid cells
+    const g = (Math.sqrt(5) - 1) / 2
     let a = lo + (i - 1) * step
     let b = lo + (i + 1) * step
-    const g = (Math.sqrt(5) - 1) / 2
     let c = b - g * (b - a)
     let d = a + g * (b - a)
     let yc = tl(c)
@@ -223,20 +216,44 @@ function chainResonances(leaves: Leaf[], gaps: Gap[]): number[] {
         yd = tl(d)
       }
     }
-    out.push(Math.exp((a + b) / 2))
+    const f = Math.exp((a + b) / 2)
+    if (!standing(f)) out.push(f)
   }
-  return out
+  return out.filter((f) => f <= RESONANCE_MAX)
 }
 
-function multiLeaf(leaves: Leaf[], gaps: Gap[]): TlResult {
+const EXTRA_CAVITY_CREDIT = 3 // dB per cavity beyond the first, over the equivalent double leaf
+
+/**
+ * Sharp double leaf standing in for a multi-cavity stack: the outer group as leaf 1, every other group
+ * combined as leaf 2, the summed cavity depth, insulated if any cavity is, the outermost cavity's decoupling.
+ */
+function equivalentDouble(layers: Layer[][], gaps: Gap[], lib: Library): TlResult {
+  const gap: Gap = {
+    ...gaps[0],
+    width: gaps.reduce((a, g) => a + g.width, 0),
+    fill: gaps.some((g) => g.fill === 'insulation') ? 'insulation' : 'empty',
+  }
+  return sharp(leaf(layers[0], lib), leaf(layers.slice(1).flat(), lib), gap)
+}
+
+function multiLeaf(leaves: Leaf[], gaps: Gap[], eq: TlResult): TlResult {
   const f0s = chainResonances(leaves, gaps)
   const fLow = f0s[0] ?? 0
-  const mTotal = leaves.reduce((a, l) => a + l.m, 0)
-  const strips = gaps.filter((g) => g.decoupling === 'strips').length * STRIPS_PENALTY
-  const thirds = THIRD_OCTAVES.map((f) => {
-    const coincidence = leaves.reduce((a, l) => a + Math.min(0, tlLeaf(l, f) - massLaw(l.m, f)), 0)
-    const tl = tlNormal(leaves, gaps, f) - FIELD_INCIDENCE + coincidence - (f > fLow ? strips : 0)
-    return Math.max(tl, massLaw(mTotal, f))
+  const M = leaves.reduce((a, l) => a + l.m, 0)
+  const credit = EXTRA_CAVITY_CREDIT * (gaps.length - 1)
+  const thirds = THIRD_OCTAVES.map((f, i) => {
+    const floor = massLaw(M, f)
+    let tl = floor
+    if (f >= fLow) {
+      tl = leaves.reduce((a, l) => a + tlLeaf(l, f), 0)
+      for (const g of gaps) {
+        const d = g.width / 1000
+        tl += f < 55 / d ? 20 * Math.log10(f * d) - 29 : 6
+        tl -= (g.fill === 'empty' ? EMPTY_FILL_PENALTY : 0) + (g.decoupling === 'strips' ? STRIPS_PENALTY : 0)
+      }
+    }
+    return Math.max(floor, Math.min(tl, eq.thirds[i] + credit))
   })
   return summarize(thirds, f0s, TL_MODEL_LABEL.multi)
 }

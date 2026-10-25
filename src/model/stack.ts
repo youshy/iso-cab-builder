@@ -2,8 +2,6 @@ import { gapsWellPlaced, type Design, type Gap, type Layer, type Library, type S
 
 export const DEFAULT_GAP: Gap = { kind: 'gap', width: 25, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' }
 
-export const hasGap = (s: StackItem[]): boolean => s.some((i) => i.kind === 'gap')
-
 /** A cavity fits at boundary `i` (between items i-1 and i) when both neighbours are layers. */
 export const canInsertGapAt = (s: StackItem[], i: number): boolean =>
   i >= 1 && i < s.length && s[i - 1].kind === 'layer' && s[i].kind === 'layer'

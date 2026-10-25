@@ -10,7 +10,7 @@ import {
   escapeLevel,
   leaf,
   tlLeaf,
-  tlChain,
+  chainF0s,
   tlStack,
   toOctaves,
 } from './tl'
@@ -96,41 +96,55 @@ describe('tlStack', () => {
 
 describe('tlStack with several cavities', () => {
   const ply = (t: number): Layer => ({ kind: 'layer', materialId: 'plywood', thickness: t })
-  const triple = (p: Partial<Gap> = {}): StackItem[] => [mdf(18), gap(p), mdf(18), gap(p), mdf(18)]
-  it('uses the transfer-matrix model and finds two resonances for a triple leaf', () => {
+  const triple = (p: Partial<Gap> = {}): StackItem[] => [ply(18), gap(p), mdf(18), gap(p), mdf(18)]
+  /** Equal mass and depth, same panels: the triple's two inner MDF sheets back to back. */
+  const double = (p: Partial<Gap> = {}): StackItem[] => [ply(18), gap({ width: 50, ...p }), mdf(18), mdf(18)]
+  const mTotal = leaf([ply(18)], lib).m + 27
+  it('uses the generalised Sharp model and finds one resonance per cavity', () => {
     const r = tlStack(triple(), lib)
     expect(r.model).toBe(TL_MODEL_LABEL.multi)
-    expect(TL_MODEL_LABEL.multi).toBe('Multi-leaf transfer-matrix estimate')
+    expect(TL_MODEL_LABEL.multi).toBe('Multi-leaf estimate (Sharp generalised)')
     expect(r.f0s).toHaveLength(2)
     expect(r.f0s[0]).toBeLessThan(r.f0s[1])
     expect(r.f0).toBe(r.f0s[0])
+    expect(tlStack(double(), lib).f0s).toHaveLength(1)
   })
   it('lumped triple-leaf resonances agree with the chain', () => {
     // equal masses m, equal springs s = rho c^2 / d: w^2 = s/m and 3 s/m
     const m = 13.5, s = (1.21 * 343 ** 2) / 0.025
-    const r = tlStack(triple(), lib)
+    const r = tlStack([mdf(18), gap(), mdf(18), gap(), mdf(18)], lib)
     expect(r.f0s[0] / (Math.sqrt(s / m) / (2 * Math.PI))).toBeCloseTo(1, 1)
     expect(r.f0s[1] / (Math.sqrt((3 * s) / m) / (2 * Math.PI))).toBeCloseTo(1, 1)
   })
-  it('never falls below the mass law of the total mass', () => {
-    const r = tlStack(triple({ fill: 'empty', decoupling: 'strips' }), lib)
-    THIRD_OCTAVES.forEach((f, i) => expect(r.thirds[i]).toBeGreaterThanOrEqual(massLaw(40.5, f) - 1e-9))
+  it('skips cavity standing-wave dips: wide empty cavities still give one f0 per cavity', () => {
+    const r = tlStack([ply(18), gap({ width: 100, fill: 'empty' }), mdf(18), gap({ width: 100, fill: 'empty' }), mdf(18)], lib)
+    expect(r.f0s).toHaveLength(2)
+    expect(r.f0s.every((f) => Math.abs(f / 1715 - 1) > 0.05)).toBe(true)
   })
-  it('insulation fill beats empty above the resonances', () => {
-    const ins = tlStack(triple(), lib)
-    const emp = tlStack(triple({ fill: 'empty' }), lib)
-    expect(at(ins.thirds, 1000)).toBeGreaterThan(at(emp.thirds, 1000))
+  it('equal-mass, equal-depth triple is within 6 dB of the double at 500 Hz and 2 kHz', () => {
+    const t = tlStack(triple(), lib).thirds
+    const d = tlStack(double(), lib).thirds
+    for (const f of [500, 2000]) expect(Math.abs(at(t, f) - at(d, f))).toBeLessThan(6)
   })
-  it('strips lower TL above the lowest resonance', () => {
-    const clips = tlStack(triple(), lib)
-    const strips = tlStack(triple({ decoupling: 'strips' }), lib)
-    expect(at(strips.thirds, 1000)).toBeLessThan(at(clips.thirds, 1000))
+  it('never exceeds the equivalent double plus 3 dB, never falls below the total-mass mass law', () => {
+    for (const p of [{}, { decoupling: 'strips' as const }, { fill: 'empty' as const }]) {
+      const r = tlStack(triple(p), lib)
+      const eq = tlStack(double(p), lib)
+      THIRD_OCTAVES.forEach((f, i) => {
+        expect(r.thirds[i]).toBeLessThanOrEqual(Math.max(eq.thirds[i] + 3, massLaw(mTotal, f)) + 1e-9)
+        expect(r.thirds[i]).toBeGreaterThanOrEqual(massLaw(mTotal, f) - 1e-9)
+      })
+    }
   })
-  it('chain model on a single cavity puts its resonance within 10% of Sharp', () => {
+  it('chain resonance of a single cavity is within 10% of Sharp', () => {
     const items: StackItem[] = [ply(18), gap(), mdf(18)]
     const sharp = tlStack(items, lib)
-    const chain = tlChain(items, lib)
-    expect(Math.abs(chain.f0! - sharp.f0!) / sharp.f0!).toBeLessThan(0.1)
+    expect(Math.abs(chainF0s(items, lib)[0] - sharp.f0!) / sharp.f0!).toBeLessThan(0.1)
+  })
+  it('a second 1 mm cavity changes TL at 1 kHz by under 6 dB', () => {
+    const one = tlStack([ply(18), gap(), mdf(18), mdf(18)], lib)
+    const two = tlStack([ply(18), gap(), mdf(18), gap({ width: 1 }), mdf(18)], lib)
+    expect(Math.abs(at(two.thirds, 1000) - at(one.thirds, 1000))).toBeLessThan(6)
   })
   it('single and double leaf report f0s consistently', () => {
     expect(tlStack([mdf(18)], lib).f0s).toEqual([])
