@@ -1,4 +1,5 @@
 import { doorLayout } from '../doors/doors'
+import { doorParts } from './doorParts'
 import { doorWall } from '../doors/side'
 import { boxBounds, boxPart, cavityOutside, facetSpan, mitreAngle, wallBoxes, wallSpan, type BoxPanel } from '../geometry/boxes'
 import { resolveDims } from '../geometry/dimensions'
@@ -230,6 +231,16 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
       })
     }
   })
+
+  // ---- doors ----
+  const dp = doorParts(d, lib)
+  for (const p of dp.parts) {
+    push({
+      name: p.name, materialId: p.materialId, thickness: p.thickness, a: p.length, b: p.width, step: 'doors',
+      kind: p.kind, qty: p.qty, notes: p.notes,
+    })
+  }
+  for (const h of dp.hardware) addHw(h.name, h.qty, h.unit)
 
   // ---- finish: kinds, rounding, warnings, merge, ids ----
   const finished: Part[] = drafts.map((dr) => {

@@ -82,7 +82,7 @@ describe('buildParts joints', () => {
     expect(dims(named(ps, /^Top\/Bottom shell, layer 2/)[0])).toEqual([1436, 486])
     expect(dims(named(ps, /^Back shell, layer 1/)[0])).toEqual([1436, 1036])
     expect(dims(named(ps, /^Back shell, layer 2/)[0])).toEqual([1400, 1000])
-    expect(ps.some((p) => p.notes.join(' ').includes('rebate'))).toBe(false)
+    expect(ps.some((p) => p.step !== 'doors' && p.notes.join(' ').includes('rebate'))).toBe(false)
   })
 
   it('rebate with a single layer: plain sides-past, no rebate note', () => {
@@ -118,7 +118,7 @@ describe('buildParts joints', () => {
     const clips = hardware.find((h) => h.name === 'Isolation clip')!
     expect(clips.unit).toBe('pcs')
     expect(clips.qty).toBe(52) // grid points per liner wall: 2x6 sides, 2x8 top/bottom, 2x12 back/front
-    expect(ps.some((p) => p.kind === 'strip')).toBe(false)
+    expect(ps.some((p) => p.step !== 'doors' && p.kind === 'strip')).toBe(false)
   })
 
   it('air gap with strips gives 50 mm rubber strips', () => {
