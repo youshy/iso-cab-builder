@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DesignSchema } from './schema'
+import { DesignSchema, MaterialSchema } from './schema'
 import { defaultDesign, defaultLibrary } from './defaults'
 
 const layer = { kind: 'layer' as const, materialId: 'plywood', thickness: 18 }
@@ -81,5 +81,25 @@ describe('DesignSchema', () => {
     }
     expect(d.cabs.some((c) => c.id === d.sim.cabId)).toBe(true)
     expect(d.cabs.some((c) => c.id === d.dims.sizingCabId)).toBe(true)
+  })
+})
+
+describe('import-boundary ranges', () => {
+  it('rejects out-of-range values', () => {
+    const lib = defaultLibrary()
+    const m = lib.materials[0]
+    expect(MaterialSchema.safeParse({ ...m, absorption: [1.5, 0, 0, 0, 0, 0] }).success).toBe(false)
+    expect(MaterialSchema.safeParse({ ...m, absorption: [-0.1, 0, 0, 0, 0, 0] }).success).toBe(false)
+    expect(MaterialSchema.safeParse({ ...m, thicknesses: [] }).success).toBe(false)
+    expect(MaterialSchema.safeParse({ ...m, thicknesses: [0] }).success).toBe(false)
+    expect(MaterialSchema.safeParse({ ...m, lossFactor: -1 }).success).toBe(false)
+    const d = defaultDesign()
+    expect(DesignSchema.safeParse({ ...d, sim: { ...d.sim, fMax: 100 } }).success).toBe(false)
+    expect(DesignSchema.safeParse({ ...d, sim: { ...d.sim, fMax: 3000 } }).success).toBe(false)
+    expect(DesignSchema.safeParse({ ...d, escape: { ...d.escape, insideLevel: [1, 2] } }).success).toBe(false)
+    expect(DesignSchema.safeParse({ ...d, dims: { ...d.dims, inner: { x: 0, y: 1, z: 1 } } }).success).toBe(false)
+    expect(DesignSchema.safeParse({ ...d, dims: { ...d.dims, outer: { x: 1, y: -1, z: 1 } } }).success).toBe(false)
+    expect(DesignSchema.safeParse({ ...d, dims: { ...d.dims, clearance: -1 } }).success).toBe(false)
+    expect(DesignSchema.safeParse({ ...d, wallDefault: [{ ...gap, width: 0 }] }).success).toBe(false)
   })
 })

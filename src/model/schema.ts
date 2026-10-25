@@ -12,15 +12,17 @@ export type WallId = z.infer<typeof WallIdSchema>
 export const DoorSideSchema = z.enum(['front', 'left', 'right'])
 export type DoorSide = z.infer<typeof DoorSideSchema>
 
+const Abs = z.number().min(0).max(1)
+
 export const MaterialSchema = z.object({
   id: z.string(),
   name: z.string(),
   kind: z.enum(['sheet', 'roll', 'fill']),
   density: z.number().positive(), // kg/m3
-  thicknesses: z.array(z.number().positive()),
+  thicknesses: z.array(z.number().positive()).min(1),
   youngsModulus: z.number().positive(), // Pa
   lossFactor: z.number().min(0),
-  absorption: z.tuple([z.number(), z.number(), z.number(), z.number(), z.number(), z.number()]), // 125..4k
+  absorption: z.tuple([Abs, Abs, Abs, Abs, Abs, Abs]), // 125..4k, each in [0,1]
 })
 export type Material = z.infer<typeof MaterialSchema>
 
@@ -33,7 +35,7 @@ export type Layer = z.infer<typeof LayerSchema>
 
 export const GapSchema = z.object({
   kind: z.literal('gap'),
-  width: z.number().min(0),
+  width: z.number().positive(),
   decoupling: z.enum(['strips', 'clips']),
   fill: z.enum(['empty', 'insulation']),
   fillMaterialId: z.string(),
@@ -130,11 +132,13 @@ export const DoorSchema = z.object({
 })
 export type Door = z.infer<typeof DoorSchema>
 
+const PositiveVec3Schema = z.object({ x: z.number().positive(), y: z.number().positive(), z: z.number().positive() })
+
 export const DimensionsSchema = z.object({
   mode: z.enum(['inside', 'outside']),
   innerSource: z.enum(['manual', 'cab']),
-  inner: Vec3Schema,
-  outer: Vec3Schema,
+  inner: PositiveVec3Schema,
+  outer: PositiveVec3Schema,
   clearance: z.number().min(0),
   sizingCabId: z.string(),
 })
@@ -148,7 +152,7 @@ export const EscapeSchema = z.object({
 export type Escape = z.infer<typeof EscapeSchema>
 
 export const SimSettingsSchema = z.object({
-  fMax: z.number().positive(),
+  fMax: z.number().min(250).max(2000),
   cabId: z.string(), // '' = no cab in simulation
   probes: z.array(Vec3Schema),
 })
