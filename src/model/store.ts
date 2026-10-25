@@ -1,5 +1,6 @@
 import { computed, signal } from '@preact/signals'
-import { DesignSchema } from './schema'
+import { DesignSchema, LibrarySchema } from './schema'
+import type { ZodError } from 'zod'
 import type { Design, Library, Project, Shop } from './schema'
 import { defaultDesign, defaultLibrary, defaultShop, newId } from './defaults'
 import { createStore } from '../storage/local'
@@ -78,6 +79,20 @@ export function createAppStore(backend: Backend) {
   const units = signal<Units>('mm')
   const compareVersion = signal<number | null>(null)
   const saveWarning = signal<string | null>(null)
+  /** Short message for the last rejected edit; clears itself after 4 s or on the next good edit. */
+  const editError = signal<string | null>(null)
+  let errorTimer: ReturnType<typeof setTimeout> | undefined
+
+  function rejectEdit(error: ZodError): void {
+    const i = error.issues[0]
+    editError.value = `Change not applied: ${i.path.length ? `${i.path.join('.')} ` : ''}${i.message}`
+    clearTimeout(errorTimer)
+    errorTimer = setTimeout(() => (editError.value = null), 4000)
+  }
+  function clearEditError(): void {
+    clearTimeout(errorTimer)
+    editError.value = null
+  }
 
   const latest = (p: Project) => p.versions[p.versions.length - 1]
   const currentProject = computed(() => projects.value.find((p) => p.id === projectId.value) ?? projects.value[0])
@@ -102,9 +117,10 @@ export function createAppStore(backend: Backend) {
     fn(next)
     const parsed = DesignSchema.safeParse(next)
     if (!parsed.success) {
-      console.warn('Rejected invalid design change:', parsed.error.issues[0])
+      rejectEdit(parsed.error)
       return
     }
+    clearEditError()
     design.value = next
     const p = currentProject.value
     persist({ ...p, working: structuredClone(next) })
@@ -159,10 +175,24 @@ export function createAppStore(backend: Backend) {
     if (!storage.saveLibrary(l)) saveWarning.value = 'Not saved: browser storage unavailable'
   }
 
+  /** Edit the library; invalid results are rejected with an edit error. Returns whether it applied. */
+  function updateLibrary(fn: (l: Library) => void): boolean {
+    const next = structuredClone(library.value)
+    fn(next)
+    const parsed = LibrarySchema.safeParse(next)
+    if (!parsed.success) {
+      rejectEdit(parsed.error)
+      return false
+    }
+    clearEditError()
+    setLibrary(next)
+    return true
+  }
+
   return {
-    library, shop, projects, projectId, design, compareVersion, units, saveWarning,
+    library, shop, projects, projectId, design, compareVersion, units, saveWarning, editError,
     basedOn, currentProject, compareDesign,
-    update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary,
+    update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary, updateLibrary,
     fmtLen: (mm: number) => formatLength(mm, units.value),
     fmtNum: (mm: number) => formatNumber(mm, units.value),
     parseLen: (text: string) => parseLength(text, units.value),
@@ -171,8 +201,8 @@ export function createAppStore(backend: Backend) {
 
 export const app = createAppStore(bootBackend())
 export const {
-  library, shop, projects, projectId, design, compareVersion, units, saveWarning,
+  library, shop, projects, projectId, design, compareVersion, units, saveWarning, editError,
   basedOn, currentProject, compareDesign,
-  update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary,
+  update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary, updateLibrary,
   fmtLen, fmtNum, parseLen,
 } = app

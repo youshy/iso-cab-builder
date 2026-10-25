@@ -2,17 +2,26 @@ import { useState } from 'preact/hooks';
 import { STEPS, StepTabs, type StepId } from './StepTabs';
 import { TopBar } from './TopBar';
 import { CabStep } from './steps/CabStep';
+import { WallsStep } from './steps/WallsStep';
+import { MaterialLibrary, libraryOpen } from './library/MaterialLibrary';
+import { editError } from '../model/store';
 
 export function App() {
   const [step, setStep] = useState<StepId>('cab');
   const label = STEPS.find((s) => s.id === step)?.label ?? '';
   return (
     <>
-      <TopBar />
+      <div>
+        <TopBar />
+        {editError.value && <div class="editerr" role="alert">{editError.value}</div>}
+      </div>
       <StepTabs current={step} onSelect={setStep} />
-      <div class="main">
+      <div class={`main ${libraryOpen.value ? 'lib-open' : ''}`}>
+        {libraryOpen.value && <MaterialLibrary />}
         {step === 'cab' ? (
           <CabStep />
+        ) : step === 'walls' ? (
+          <WallsStep />
         ) : (
           <>
             <aside>

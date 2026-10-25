@@ -21,16 +21,41 @@ describe('store', () => {
     expect(s.currentProject.value.versions.map((v) => v.version)).toEqual([1])
   })
 
-  it('rejects an invalid update and leaves design unchanged', () => {
+  it('rejects an invalid update, sets editError, and clears it on the next good edit', () => {
     const s = createAppStore(memoryBackend())
     const before = s.design.value
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     s.update((d) => {
       d.cabs[0].w = -5
     })
     expect(s.design.value).toBe(before)
-    expect(warn).toHaveBeenCalledOnce()
-    warn.mockRestore()
+    expect(s.editError.value).toMatch(/cabs\.0\.w/)
+    s.update((d) => {
+      d.cabs[0].name = 'ok'
+    })
+    expect(s.editError.value).toBeNull()
+  })
+
+  it('clears editError after 4 s', () => {
+    vi.useFakeTimers()
+    const s = createAppStore(memoryBackend())
+    s.update((d) => {
+      d.cabs[0].w = -5
+    })
+    expect(s.editError.value).not.toBeNull()
+    vi.advanceTimersByTime(4001)
+    expect(s.editError.value).toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('updateLibrary validates and persists', () => {
+    const backend = memoryBackend()
+    const s = createAppStore(backend)
+    expect(s.updateLibrary((l) => void (l.materials[0].density = 700))).toBe(true)
+    expect(s.library.value.materials[0].density).toBe(700)
+    expect(createAppStore(backend).library.value.materials[0].density).toBe(700)
+    expect(s.updateLibrary((l) => void (l.materials[0].density = -1))).toBe(false)
+    expect(s.library.value.materials[0].density).toBe(700)
+    expect(s.editError.value).toMatch(/materials\.0\.density/)
   })
 
   it('applies a valid update and autosaves it to storage', () => {

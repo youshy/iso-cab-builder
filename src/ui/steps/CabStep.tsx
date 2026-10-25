@@ -229,7 +229,7 @@ export function CabStep() {
         )}
         <div class="row">
           <span class="rl">Clearance</span>
-          <NumberField ariaLabel="Clearance" value={dims.clearance} allowZero onCommit={(v) => update((x) => void (x.dims.clearance = v))} />
+          <NumberField ariaLabel="Clearance" value={dims.clearance} min={0} allowZero onCommit={(v) => update((x) => void (x.dims.clearance = v))} />
         </div>
         <SizeTable d={d} />
         <p class="hint">

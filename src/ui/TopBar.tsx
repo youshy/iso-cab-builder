@@ -3,6 +3,7 @@ import {
   addProject, compareVersion, currentProject, basedOn, library, loadVersion, newProject, projectId,
   projects, saveVersion, saveWarning, selectProject, setLibrary, units,
 } from '../model/store'
+import { libraryOpen } from './library/MaterialLibrary'
 import { exportProject, importProject } from '../storage/io'
 
 function download(name: string, text: string) {
@@ -67,6 +68,9 @@ export function TopBar() {
       <button type="button" class="btn" onClick={() => saveVersion()}>Save as v{nextVersion}</button>
       {saveWarning.value && <span class="err">{saveWarning.value}</span>}
       {importError && <span class="err" role="alert">{importError}</span>}
+      <button type="button" class="btn" aria-pressed={libraryOpen.value} onClick={() => (libraryOpen.value = !libraryOpen.value)}>
+        Materials
+      </button>
       <div class="sp" />
       <div class="ctl">
         Compare with
