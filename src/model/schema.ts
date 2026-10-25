@@ -267,5 +267,9 @@ export const ExportFileSchema = z.object({
   schemaVersion: z.literal(1),
   project: ProjectSchema,
   materials: z.array(MaterialSchema),
+  /** Hardware the design uses; older files have none. */
+  hinges: z.array(HingeTypeSchema).default([]),
+  seals: z.array(SealTypeSchema).default([]),
+  latches: z.array(LatchTypeSchema).default([]),
 })
 export type ExportFile = z.infer<typeof ExportFileSchema>

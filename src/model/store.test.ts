@@ -241,3 +241,95 @@ describe('store interior rescale', () => {
     expect(s.design.value.interior.left!.facets.map((f) => f.width)).toEqual([80, 160])
   })
 })
+
+describe('deleting a material', () => {
+  it('is blocked while any project, saved version or working copy uses it, naming where', () => {
+    const s = createAppStore(memoryBackend())
+    s.update((d) => void (d.wallDefault = [{ kind: 'layer', materialId: 'osb', thickness: 12 }]))
+    s.saveVersion() // v2 uses osb
+    s.update((d) => void (d.wallDefault = [{ kind: 'layer', materialId: 'plywood', thickness: 18 }]))
+    s.saveVersion() // v3 and the working copy no longer do
+    expect(s.removeMaterial('osb')).toMatch(/^Cannot delete OSB: used in My iso cab v2 \(default wall\)/)
+    expect(s.library.value.materials.some((m) => m.id === 'osb')).toBe(true)
+  })
+
+  it('checks other projects too', () => {
+    const s = createAppStore(memoryBackend())
+    s.newProject()
+    s.update((d) => void (d.treatments = [{ id: 't', surface: { wall: 'left' }, materialId: 'foam', thickness: 50 }]))
+    s.selectProject(s.projects.value[0].id)
+    expect(s.removeMaterial('foam')).toMatch(/Design 2 working copy \(surface treatment\)/)
+  })
+
+  it('an unused material is removed; an empty cavity fill does not count as use', () => {
+    const s = createAppStore(memoryBackend())
+    s.update((d) => void (d.wallDefault = [
+      { kind: 'layer', materialId: 'plywood', thickness: 18 },
+      { kind: 'gap', width: 20, decoupling: 'clips', fill: 'empty', fillMaterialId: 'foam' },
+      { kind: 'layer', materialId: 'mdf', thickness: 18 },
+    ]))
+    expect(s.removeMaterial('foam')).toBeNull()
+    expect(s.library.value.materials.some((m) => m.id === 'foam')).toBe(false)
+  })
+})
+
+describe('unsaved changes and loading a version', () => {
+  it('knows when the working copy differs from the version it came from', () => {
+    const s = createAppStore(memoryBackend())
+    expect(s.hasUnsavedChanges.value).toBe(false)
+    s.update((d) => void (d.cabs[0].name = 'edited'))
+    expect(s.hasUnsavedChanges.value).toBe(true)
+    s.saveVersion()
+    expect(s.hasUnsavedChanges.value).toBe(false)
+    s.update((d) => void (d.cabs[0].name = 'again'))
+    s.loadVersion(1, 'discard')
+    expect(s.hasUnsavedChanges.value).toBe(false)
+  })
+
+  it("'save' keeps the edits as a new version before loading", () => {
+    const s = createAppStore(memoryBackend())
+    s.update((d) => void (d.cabs[0].name = 'keep me'))
+    s.loadVersion(1, 'save')
+    expect(s.currentProject.value.versions.map((v) => v.version)).toEqual([1, 2])
+    expect(s.currentProject.value.versions[1].design.cabs[0].name).toBe('keep me')
+    expect(s.design.value.cabs[0].name).not.toBe('keep me')
+    expect(s.basedOn.value).toBe(1)
+  })
+
+  it('a reloaded working copy that matches no version counts as unsaved', () => {
+    const backend = memoryBackend()
+    const s = createAppStore(backend)
+    s.update((d) => void (d.cabs[0].name = 'edited'))
+    expect(createAppStore(backend).hasUnsavedChanges.value).toBe(true)
+    s.saveVersion()
+    expect(createAppStore(backend).hasUnsavedChanges.value).toBe(false)
+  })
+})
+
+describe('renaming and deleting designs', () => {
+  it('renames and persists', () => {
+    const backend = memoryBackend()
+    const s = createAppStore(backend)
+    s.renameProject(s.projectId.value, '  Big box  ')
+    expect(s.currentProject.value.name).toBe('Big box')
+    expect(createAppStore(backend).projects.value[0].name).toBe('Big box')
+    s.renameProject(s.projectId.value, '   ')
+    expect(s.currentProject.value.name).toBe('Big box')
+  })
+
+  it('deletes from storage and selects another design; the last one is replaced by a fresh design', () => {
+    const backend = memoryBackend()
+    const s = createAppStore(backend)
+    const first = s.projectId.value
+    s.newProject()
+    const second = s.projectId.value
+    s.deleteProject(second)
+    expect(s.projects.value.map((p) => p.id)).toEqual([first])
+    expect(s.projectId.value).toBe(first)
+    expect(createAppStore(backend).projects.value.map((p) => p.id)).toEqual([first])
+    s.deleteProject(first)
+    expect(s.projects.value).toHaveLength(1)
+    expect(s.projectId.value).not.toBe(first)
+    expect(s.currentProject.value.versions).toHaveLength(1)
+  })
+})

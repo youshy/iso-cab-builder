@@ -6,6 +6,8 @@ import { defaultDesign, defaultLibrary, defaultShop, newId } from './defaults'
 import { createStore } from '../storage/local'
 import { resolveDims } from '../geometry/dimensions'
 import { rescaleInteriors } from './interiorEdit'
+import { deepEqual } from './equal'
+import { materialUsageInProjects } from './stack'
 import type { SimResult } from '../acoustics/fdtd'
 import type { Axis } from './schema'
 
@@ -108,6 +110,16 @@ export function createAppStore(backend: Backend) {
   /** Saved version the working copy was started from, or null when unknown. */
   const basedOn = signal<number | null>(loaded[0].working ? null : latest(loaded[0]).version)
 
+  /**
+   * Whether the working copy differs from the version it was started from. With that version unknown
+   * (a working copy restored from storage), it is unsaved unless it matches some saved version.
+   */
+  const hasUnsavedChanges = computed(() => {
+    const versions = currentProject.value.versions
+    const base = basedOn.value === null ? undefined : versions.find((v) => v.version === basedOn.value)
+    return base ? !deepEqual(base.design, design.value) : !versions.some((v) => deepEqual(v.design, design.value))
+  })
+
   const compareDesign = computed<Design | null>(() => {
     const n = compareVersion.value
     if (n === null) return null
@@ -147,9 +159,11 @@ export function createAppStore(backend: Backend) {
     return n
   }
 
-  function loadVersion(n: number): void {
+  /** Load saved version n; with 'save', the working copy is first kept as a new version. */
+  function loadVersion(n: number, unsaved: 'save' | 'discard' = 'discard'): void {
     const v = currentProject.value.versions.find((x) => x.version === n)
     if (!v) return
+    if (unsaved === 'save' && hasUnsavedChanges.value) saveVersion()
     design.value = structuredClone(v.design)
     basedOn.value = n
     persist({ ...currentProject.value, working: structuredClone(v.design) })
@@ -179,6 +193,29 @@ export function createAppStore(backend: Backend) {
     })
   }
 
+  /** Rename a design; a blank name is ignored. */
+  function renameProject(id: string, name: string): void {
+    const p = projects.value.find((x) => x.id === id)
+    const clean = name.trim()
+    if (!p || clean === '' || clean === p.name) return
+    persist({ ...p, name: clean })
+  }
+
+  /** Delete a design from storage. Another one is selected; deleting the last leaves a fresh design. */
+  function deleteProject(id: string): void {
+    if (!projects.value.some((p) => p.id === id)) return
+    storage.deleteProject(id)
+    if (!storage.ok) saveWarning.value = 'Not saved: browser storage unavailable'
+    projects.value = projects.value.filter((p) => p.id !== id)
+    if (projects.value.length === 0) {
+      addProject({
+        id: newId(),
+        name: 'My iso cab',
+        versions: [{ version: 1, savedAt: new Date().toISOString(), design: defaultDesign() }],
+      })
+    } else if (projectId.value === id) selectProject(projects.value[0].id)
+  }
+
   function setLibrary(l: Library): void {
     library.value = l
     if (!storage.saveLibrary(l)) saveWarning.value = 'Not saved: browser storage unavailable'
@@ -198,6 +235,19 @@ export function createAppStore(backend: Backend) {
     return true
   }
 
+  /**
+   * Delete a material unless some saved version or working copy of any design uses it.
+   * Returns the reason it was refused, or null when it was deleted.
+   */
+  function removeMaterial(id: string): string | null {
+    const m = library.value.materials.find((x) => x.id === id)
+    if (!m) return null
+    const used = materialUsageInProjects(projects.value, id)
+    if (used.length) return `Cannot delete ${m.name}: used in ${used.join(', ')}.`
+    updateLibrary((l) => void (l.materials = l.materials.filter((x) => x.id !== id)))
+    return null
+  }
+
   /** Edit the shop settings; invalid results are rejected with an edit error. Returns whether it applied. */
   function updateShop(fn: (s: Shop) => void): boolean {
     const next = structuredClone(shop.value)
@@ -215,8 +265,9 @@ export function createAppStore(backend: Backend) {
 
   return {
     library, shop, projects, projectId, design, compareVersion, units, saveWarning, editError,
-    simCurrent, simCompare, sliceRequest, basedOn, currentProject, compareDesign,
-    update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary, updateLibrary, updateShop,
+    simCurrent, simCompare, sliceRequest, basedOn, currentProject, compareDesign, hasUnsavedChanges,
+    update, saveVersion, loadVersion, selectProject, addProject, newProject, renameProject, deleteProject,
+    setLibrary, updateLibrary, removeMaterial, updateShop,
     fmtLen: (mm: number) => formatLength(mm, units.value),
     fmtNum: (mm: number) => formatNumber(mm, units.value),
     parseLen: (text: string) => parseLength(text, units.value),
@@ -226,7 +277,8 @@ export function createAppStore(backend: Backend) {
 export const app = createAppStore(bootBackend())
 export const {
   library, shop, projects, projectId, design, compareVersion, units, saveWarning, editError,
-  simCurrent, simCompare, sliceRequest, basedOn, currentProject, compareDesign,
-  update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary, updateLibrary, updateShop,
+  simCurrent, simCompare, sliceRequest, basedOn, currentProject, compareDesign, hasUnsavedChanges,
+  update, saveVersion, loadVersion, selectProject, addProject, newProject, renameProject, deleteProject,
+  setLibrary, updateLibrary, removeMaterial, updateShop,
   fmtLen, fmtNum, parseLen,
 } = app

@@ -2,8 +2,7 @@ import { signal } from '@preact/signals'
 import { useState } from 'preact/hooks'
 import { newId } from '../../model/defaults'
 import type { Material } from '../../model/schema'
-import { materialUsage } from '../../model/stack'
-import { design, library, updateLibrary } from '../../model/store'
+import { library, removeMaterial, updateLibrary } from '../../model/store'
 import { NumberField } from '../NumberField'
 
 /** Whether the library panel replaces the step controls. */
@@ -20,13 +19,7 @@ function edit(id: string, fn: (m: Material) => void): boolean {
 
 function MaterialCard({ m, onBlocked }: { m: Material; onBlocked: (msg: string | null) => void }) {
   function remove() {
-    const used = materialUsage(design.value, m.id)
-    if (used.length) {
-      onBlocked(`Cannot delete ${m.name}: used in ${used.join(', ')}.`)
-      return
-    }
-    onBlocked(null)
-    updateLibrary((l) => void (l.materials = l.materials.filter((x) => x.id !== m.id)))
+    onBlocked(removeMaterial(m.id))
   }
   function duplicate() {
     onBlocked(null)

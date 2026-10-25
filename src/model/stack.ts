@@ -1,4 +1,4 @@
-import { gapsWellPlaced, type Design, type Gap, type Layer, type Library, type StackItem, type WallId } from './schema'
+import { gapsWellPlaced, type Design, type Gap, type Layer, type Library, type Project, type StackItem, type WallId } from './schema'
 
 export const DEFAULT_GAP: Gap = { kind: 'gap', width: 25, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' }
 
@@ -87,4 +87,21 @@ export function materialUsage(d: Design, id: string): string[] {
   if (stackUses(d.door.outer.stack, id)) out.push('outer door leaf')
   if (stackUses(d.door.inner.stack, id)) out.push('inner door leaf')
   return [...new Set(out)]
+}
+
+/**
+ * Every saved version and working copy, in every project, that references a material, as
+ * "<design> v<n> (<places>)" or "<design> working copy (<places>)".
+ */
+export function materialUsageInProjects(projects: Project[], id: string): string[] {
+  const out: string[] = []
+  for (const p of projects) {
+    for (const v of p.versions) {
+      const used = materialUsage(v.design, id)
+      if (used.length) out.push(`${p.name} v${v.version} (${used.join(', ')})`)
+    }
+    const used = p.working ? materialUsage(p.working, id) : []
+    if (used.length) out.push(`${p.name} working copy (${used.join(', ')})`)
+  }
+  return out
 }

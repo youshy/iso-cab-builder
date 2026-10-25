@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createStore } from './local'
-import { exportProject, importProject } from './io'
+import { exportFileName, exportProject, importProject } from './io'
 import { defaultDesign, defaultLibrary, defaultShop, newId } from '../model/defaults'
 import type { Project } from '../model/schema'
 
@@ -114,6 +114,77 @@ describe('export/import', () => {
     expect(r.library.materials.find((m) => m.id === 'birch')?.name).toBe('Birch')
     expect(r.library.materials.find((m) => m.id === 'plywood')?.name).toBe('Plywood')
     expect(r.library.materials.length).toBe(lib.materials.length + 1)
+  })
+})
+
+describe('export/import references', () => {
+  const emptyGap = (fillMaterialId: string): Project['versions'][number]['design']['wallDefault'] => [
+    { kind: 'layer', materialId: 'plywood', thickness: 18 },
+    { kind: 'gap', width: 20, decoupling: 'clips', fill: 'empty', fillMaterialId },
+    { kind: 'layer', materialId: 'mdf', thickness: 18 },
+  ]
+
+  it('an unknown material only in an empty-fill cavity is not an error, and is not exported', () => {
+    const p = project()
+    p.versions[0].design.wallDefault = emptyGap('deleted-fill')
+    const text = exportProject(p, defaultLibrary())
+    expect(JSON.parse(text).materials.map((m: { id: string }) => m.id).sort()).toEqual(['mdf', 'plywood'])
+    expect(importProject(text, defaultLibrary()).ok).toBe(true)
+  })
+
+  it('a clashing material is imported under a new id and the imported design is remapped to it', () => {
+    const p = project()
+    const file = JSON.parse(exportProject(p, defaultLibrary()))
+    file.materials = file.materials.map((m: { id: string; density: number }) => (m.id === 'plywood' ? { ...m, density: 999 } : m))
+    const r = importProject(JSON.stringify(file), defaultLibrary())
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const mine = r.library.materials.find((m) => m.id === 'plywood')!
+    const theirs = r.library.materials.find((m) => m.id === 'plywood-imported')!
+    expect([mine.density, theirs.density]).toEqual([600, 999])
+    expect(r.project.versions[0].design.wallDefault[0]).toMatchObject({ materialId: 'plywood-imported' })
+    expect(r.notes.join(' ')).toMatch(/plywood-imported/)
+  })
+
+  it('identical materials are not duplicated', () => {
+    const r = importProject(exportProject(project(), defaultLibrary()), defaultLibrary())
+    expect(r.ok && r.library.materials.length).toBe(defaultLibrary().materials.length)
+    expect(r.ok && r.notes).toEqual([])
+  })
+
+  it('exports the hinges, seals and latches the design uses and merges them on import', () => {
+    const lib = defaultLibrary()
+    lib.hinges.push({ id: 'heavy', name: 'Heavy hinge', kind: 'lift-off', leafWidth: 60, edgeInset: 120, weightKg: 0.8 })
+    const p = project()
+    p.versions[0].design.door.outer.hingeTypeId = 'heavy'
+    const file = JSON.parse(exportProject(p, lib))
+    expect(file.hinges.map((h: { id: string }) => h.id).sort()).toEqual(['butt-75', 'heavy'])
+    expect(file.seals.map((h: { id: string }) => h.id)).toEqual(['tape-12x6'])
+    expect(file.latches.map((h: { id: string }) => h.id)).toEqual(['compression'])
+    // Into a library without the heavy hinge, and with a different butt hinge.
+    const other = defaultLibrary()
+    other.hinges[0].edgeInset = 99
+    const r = importProject(JSON.stringify(file), other)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.library.hinges.find((h) => h.id === 'heavy')?.name).toBe('Heavy hinge')
+    expect(r.library.hinges.find((h) => h.id === 'butt-75')?.edgeInset).toBe(99)
+    expect(r.library.hinges.find((h) => h.id === 'butt-75-imported')?.edgeInset).toBe(150)
+    expect(r.project.versions[0].design.door.inner.hingeTypeId).toBe('butt-75-imported')
+  })
+
+  it('files without hardware lists still import', () => {
+    const file = JSON.parse(exportProject(project(), defaultLibrary()))
+    delete file.hinges
+    delete file.seals
+    delete file.latches
+    expect(importProject(JSON.stringify(file), defaultLibrary()).ok).toBe(true)
+  })
+
+  it('export file names are the sanitised design name', () => {
+    expect(exportFileName('My iso cab')).toBe('My iso cab.isocab.json')
+    expect(exportFileName('a/b:c*?"<>|')).toBe('a-b-c.isocab.json')
+    expect(exportFileName('   ')).toBe('design.isocab.json')
   })
 })
 
