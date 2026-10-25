@@ -6,6 +6,8 @@ import { defaultDesign, defaultLibrary, defaultShop, newId } from './defaults'
 import { createStore } from '../storage/local'
 import { resolveDims } from '../geometry/dimensions'
 import { rescaleInteriors } from './interiorEdit'
+import type { SimResult } from '../acoustics/fdtd'
+import type { Axis } from './schema'
 
 export type Units = 'mm' | 'in'
 type Backend = Parameters<typeof createStore>[0]
@@ -79,6 +81,11 @@ export function createAppStore(backend: Backend) {
   const projectId = signal<string>(loaded[0].id)
   const units = signal<Units>('mm')
   const compareVersion = signal<number | null>(null)
+  /** Latest simulation results; the scheduler fills them. Kept while a newer run is pending. */
+  const simCurrent = signal<SimResult | null>(null)
+  const simCompare = signal<SimResult | null>(null)
+  /** Pressure slice the Acoustics step wants computed with the run; null until it is opened. */
+  const sliceRequest = signal<{ axis: Axis; at: number; f: number } | null>(null)
   const saveWarning = signal<string | null>(null)
   /** Short message for the last rejected edit; clears itself after 4 s or on the next good edit. */
   const editError = signal<string | null>(null)
@@ -193,7 +200,7 @@ export function createAppStore(backend: Backend) {
 
   return {
     library, shop, projects, projectId, design, compareVersion, units, saveWarning, editError,
-    basedOn, currentProject, compareDesign,
+    simCurrent, simCompare, sliceRequest, basedOn, currentProject, compareDesign,
     update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary, updateLibrary,
     fmtLen: (mm: number) => formatLength(mm, units.value),
     fmtNum: (mm: number) => formatNumber(mm, units.value),
@@ -204,7 +211,7 @@ export function createAppStore(backend: Backend) {
 export const app = createAppStore(bootBackend())
 export const {
   library, shop, projects, projectId, design, compareVersion, units, saveWarning, editError,
-  basedOn, currentProject, compareDesign,
+  simCurrent, simCompare, sliceRequest, basedOn, currentProject, compareDesign,
   update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary, updateLibrary,
   fmtLen, fmtNum, parseLen,
 } = app

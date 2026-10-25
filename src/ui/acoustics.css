@@ -1,0 +1,21 @@
+/* simulation status and Acoustics step */
+.dot.run{background:var(--ink-3);animation:pulse 1s ease-in-out infinite}
+.dot.stale{background:var(--warn)}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.dot.run{animation:none}}
+.status .u{color:var(--warn)}
+.acstage{display:block;overflow:auto;padding:16px 20px;min-height:0}
+.acstage h3{margin-top:24px}
+.acstage h3:first-child{margin-top:0}
+.acstage .estimate{font-size:12px;color:var(--ink-2);margin:0 0 8px}
+.modetable{border-collapse:collapse;font-size:12.5px;width:100%;max-width:720px}
+.modetable th{font-weight:600;text-align:right;color:var(--ink-2);padding:4px 10px;border-bottom:1px solid var(--line-strong)}
+.modetable td{text-align:right;padding:4px 10px;border-bottom:1px solid var(--line)}
+.modetable th:first-child,.modetable td:first-child{text-align:left}
+.modetable .d{color:var(--ok)} .modetable .u{color:var(--warn)}
+.slicebox{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.slicemap{width:100%;max-width:520px;border:1px solid var(--line-strong);image-rendering:pixelated;
+  background:repeating-linear-gradient(-45deg,var(--ink-3) 0 1px,var(--bg) 1px 4px)}
+.slicekey{font-size:12px;color:var(--ink-2)}
+.slicekey i{display:inline-block;width:12px;height:12px;vertical-align:middle;margin-right:4px;border:1px solid var(--line-strong)}
+.acside input[type=range]{width:100%;accent-color:var(--accent);margin:0}
