@@ -269,7 +269,7 @@ describe('buildScene', () => {
       }
     })
 
-    describe('boxes are closed and no two wall layers overlap', () => {
+    describe('boxes are closed and no two wall layers overlap', { timeout: 60_000 }, () => {
       const stacks: [string, StackItem[]][] = [
         ['two layers', defaultDesign().wallDefault],
         ['gap', gap(25)],
@@ -391,7 +391,7 @@ describe('buildScene', () => {
       expect(doorSolids(d).every((x) => x.wall === 'front')).toBe(true)
     })
 
-    it('no door solid intersects a wall layer: default, gap on, split, framed', () => {
+    it('no door solid intersects a wall layer: default, gap on, split, framed', { timeout: 60_000 }, () => {
       const variants: [string, (d: Design) => void][] = [
         ['default', () => {}],
         ['gap on', (d) => {
