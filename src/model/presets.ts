@@ -7,7 +7,8 @@ export const SPEAKER_PRESETS: SpeakerPreset[] = [
   { id: '2x12', label: '2x12 side by side', cols: 2, rows: 1 },
   { id: '2x12v', label: '2x12 vertical', cols: 1, rows: 2 },
   { id: '4x12', label: '4x12 (2 by 2)', cols: 2, rows: 2 },
-  { id: '6x12', label: '6x12 (3 by 2)', cols: 3, rows: 2 },
+  { id: '6x12', label: '6x12 (2 across, 3 high)', cols: 2, rows: 3 },
+  { id: '6x12w', label: '6x12 wide (3 by 2)', cols: 3, rows: 2 },
 ]
 
 const round1 = (n: number) => Math.round(n * 10) / 10

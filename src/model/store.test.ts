@@ -161,7 +161,8 @@ describe('applyCabEdit', () => {
     const cab = defaultDesign().cabs[0]
     applyCabEdit(cab, (c) => (c.w = 900))
     expect(matchPreset(cab)?.id).toBe('6x12')
-    expect(cab.speakers[2].x).toBe(750)
+    // 2 columns on w=900: x = 900 * (c + 0.5) / 2 -> 225, 675
+    expect(cab.speakers[1].x).toBe(675)
   })
 })
 
@@ -187,6 +188,24 @@ describe('speaker presets', () => {
   it('6x12 matches the default cab layout', () => {
     const cab = defaultDesign().cabs[0]
     expect(matchPreset(cab)?.id).toBe('6x12')
+  })
+  it('default cab is 760 x 1140 x 360 with speakers 2 across, 3 high', () => {
+    const cab = defaultDesign().cabs[0]
+    expect([cab.w, cab.h, cab.d]).toEqual([760, 1140, 360])
+    expect(cab.speakers).toEqual([
+      { x: 190, y: 190 }, { x: 570, y: 190 },
+      { x: 190, y: 570 }, { x: 570, y: 570 },
+      { x: 190, y: 950 }, { x: 570, y: 950 },
+    ])
+  })
+  it('6x12 has 2 distinct x and 3 distinct y; 6x12 wide is the 3 by 2 layout', () => {
+    const cab = { w: 760, h: 1140 }
+    const s = presetSpeakers(SPEAKER_PRESETS.find((x) => x.id === '6x12')!, cab)
+    expect(new Set(s.map((q) => q.x)).size).toBe(2)
+    expect(new Set(s.map((q) => q.y)).size).toBe(3)
+    const wide = presetSpeakers(SPEAKER_PRESETS.find((x) => x.id === '6x12w')!, { w: 1350, h: 980 })
+    expect(new Set(wide.map((q) => q.x)).size).toBe(3)
+    expect(new Set(wide.map((q) => q.y)).size).toBe(2)
   })
   it('spreads centres evenly and detects custom', () => {
     const cab = { w: 600, h: 600, speakers: [] as { x: number; y: number }[] }

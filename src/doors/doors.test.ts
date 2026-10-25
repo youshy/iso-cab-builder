@@ -19,19 +19,21 @@ const gapStack = (): Design['wallDefault'] => [
 ]
 
 describe('doorLayout', () => {
-  it('default design: left side, 390x1010 opening, 440x1060 leaf, 3 hinges', () => {
+  it('default design: left side, 390x1170 opening, 440x1220 leaf, 3 hinges', () => {
     const l = dualLayout(defaultDesign(), lib)
     expect(l.side).toBe('left')
-    expect(l.outer.opening).toEqual({ w: 390, h: 1010 })
-    expect(l.outer.leaves).toEqual([{ w: 440, h: 1060, t: 18 }])
-    expect(l.outer.hinges).toEqual([{ edge: 'left', positions: [150, 530, 910] }])
+    // opening = cab face (360 d, 1140 h) + 2 * 15 margin; leaf = opening + 2 * 25 overlap
+    expect(l.outer.opening).toEqual({ w: 390, h: 1170 })
+    expect(l.outer.leaves).toEqual([{ w: 440, h: 1220, t: 18 }])
+    // hinges at 150 inset, 1220 / 2, 1220 - 150
+    expect(l.outer.hinges).toEqual([{ edge: 'left', positions: [150, 610, 1070] }])
     expect(l.outer.mount).toBe('shell')
     expect(l.cabsThrough.every((c) => c.fits)).toBe(true)
   })
 
   it('latches sit on the opposite edge, evenly spaced from the inset', () => {
     const l = dualLayout(defaultDesign(), lib)
-    expect(l.outer.latches).toEqual([100, 960])
+    expect(l.outer.latches).toEqual([100, 1120]) // 100 inset, 1220 - 100
   })
 
   it('framed, gap off: frame lines the reveal; cutout grows by the strips', () => {
@@ -41,8 +43,8 @@ describe('doorLayout', () => {
     const l = dualLayout(d, lib)
     expect(l.outer.frame).toEqual({ width: 45, depth: 12 }) // betweenDepth = 36 - (18 + 6)
     expect(l.inner.frame).toEqual({ width: 45, depth: 24 }) // rebate depth
-    expect(l.outer.cutout).toEqual({ w: 480, h: 1100 })
-    expect(l.outer.opening).toEqual({ w: 390, h: 1010 })
+    expect(l.outer.cutout).toEqual({ w: 480, h: 1260 }) // opening + 2 * 45 frame strips
+    expect(l.outer.opening).toEqual({ w: 390, h: 1170 })
     expect(l.cabsThrough.every((c) => c.fits)).toBe(true)
   })
 
@@ -57,7 +59,7 @@ describe('doorLayout', () => {
   })
 
   it('unframed cutout equals the clear opening', () => {
-    expect(dualLayout(defaultDesign(), lib).outer.cutout).toEqual({ w: 390, h: 1010 })
+    expect(dualLayout(defaultDesign(), lib).outer.cutout).toEqual({ w: 390, h: 1170 })
   })
 
   it('leaf shorter than 900 gets 2 hinges', () => {
@@ -71,7 +73,7 @@ describe('doorLayout', () => {
     d.door.outer.hingeEdge = 'top'
     const l = dualLayout(d, lib)
     expect(l.outer.hinges).toEqual([{ edge: 'top', positions: [150, 290] }])
-    expect(l.outer.swingRadius).toBe(1060)
+    expect(l.outer.swingRadius).toBe(1220) // top hinge: swing is the leaf height
   })
 
   it('outer leaf opening in with insulation between collides', () => {
@@ -219,8 +221,11 @@ describe('whole-wall door', () => {
 
   it('hinges: 3 for an edge under 1200, 4 from 1200', () => {
     const d = wallDesign()
-    expect(doorLayout(d, lib).wall!.hinges).toHaveLength(3)
+    // default panel h = outer y = 1180 + 72 = 1252, already 1200 or more
+    expect(doorLayout(d, lib).wall!.hinges).toHaveLength(4)
     d.dims.innerSource = 'manual'
+    d.dims.inner.y = 1000 // outer y = 1072, under 1200
+    expect(doorLayout(d, lib).wall!.hinges).toHaveLength(3)
     d.dims.inner.y = 1400
     const w = doorLayout(d, lib).wall!
     expect(w.hinges).toHaveLength(4)

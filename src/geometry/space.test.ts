@@ -35,7 +35,8 @@ describe('cabFit / cabBox', () => {
   it('outside mode too small reports shortBy', () => {
     const d = base()
     d.dims.mode = 'outside'
-    d.dims.outer = { x: 1450, y: 1100, z: 500 }
+    // free x = 850 - 72 = 778 < 760 + 40 = 800: short by 22
+    d.dims.outer = { x: 850, y: 1300, z: 500 }
     const [f] = cabFit(d)
     expect(f.fits).toBe(false)
     expect(f.shortBy.x).toBeGreaterThan(0)
@@ -145,7 +146,8 @@ describe('cab rotation', () => {
   it('cabFit fails outside mode when a tight cab is rotated', () => {
     const d = base()
     d.dims.mode = 'outside'
-    d.dims.outer = { x: 1462, y: 1100, z: 472 }
+    // inner 800 x 1180 x 400 (outer minus 72) is exactly the cab plus 20 mm clearance
+    d.dims.outer = { x: 872, y: 1252, z: 472 }
     expect(cabFit(d)[0].fits).toBe(true)
     d.cabYaw = 20
     const [f] = cabFit(d)
@@ -160,14 +162,14 @@ describe('cab rotation', () => {
     expect(yaw).toBe(90)
     expect(centre.x).toBeCloseTo(inner.x / 2, 6)
     expect(centre.y).toBeCloseTo(d.cabs[0].h / 2, 6)
-    expect(centre.z).toBeCloseTo(d.dims.clearance + 1350 / 2, 6)
+    expect(centre.z).toBeCloseTo(d.dims.clearance + 760 / 2, 6)
   })
   it('cabBox is the bounding box of the rotated cab', () => {
     const d = base()
     d.cabYaw = 90
     const b = cabBox(d, d.cabs[0])
     expect(b.max.x - b.min.x).toBeCloseTo(360, 6)
-    expect(b.max.z - b.min.z).toBeCloseTo(1350, 6)
+    expect(b.max.z - b.min.z).toBeCloseTo(760, 6)
     expect(b.min.z).toBeCloseTo(d.dims.clearance, 6)
   })
   it('isAir tests the oriented box: a bounding-box corner is air at 45 degrees', () => {

@@ -54,14 +54,16 @@ describe('resolveDims', () => {
   })
   it('inside/cab without facets', () => {
     const r = resolveDims(base())
-    expect(r.inner).toEqual({ x: 1390, y: 1020, z: 400 })
+    // cab 760 x 1140 x 360 + 2 * 20 clearance per axis
+    expect(r.inner).toEqual({ x: 800, y: 1180, z: 400 })
     expect(r.grownBy).toEqual({ x: 0, y: 0, z: 0 })
   })
   it('inside/cab grows with left facets', () => {
     const d = base()
     d.interior.left = leftFacets()
     const r = resolveDims(d)
-    expect(r.inner.x).toBe(1424.1)
+    // 760 + 40 + 34.1 facet intrusion
+    expect(r.inner.x).toBe(834.1)
     expect(r.grownBy.x).toBe(34.1)
   })
   it('outside with facets reduces free space only', () => {
@@ -78,7 +80,7 @@ describe('resolveDims', () => {
     const d = base()
     d.door.side = 'left'
     d.interior.left = leftFacets()
-    expect(resolveDims(d).inner.x).toBe(1390)
+    expect(resolveDims(d).inner.x).toBe(800) // 760 + 40, facets on the door wall ignored
   })
   it('wall override changes outer', () => {
     const d = base()
@@ -140,9 +142,10 @@ describe('cab rotation sizing', () => {
     d.cabYaw = 90
     const r = resolveDims(d)
     expect(r.inner.x).toBeCloseTo(360 + 40, 1)
-    expect(r.inner.z).toBeCloseTo(1350 + 40, 1)
+    expect(r.inner.z).toBeCloseTo(760 + 40, 1)
     expect(r.inner.y).toBe(base().dims.inner.y)
     d.cabYaw = 45
-    expect(resolveDims(d).inner.x).toBeCloseTo(1209.2 + 40, 1)
+    // 45 degrees: (760 + 360) / sqrt(2) = 791.96
+    expect(resolveDims(d).inner.x).toBeCloseTo(791.96 + 40, 1)
   })
 })
