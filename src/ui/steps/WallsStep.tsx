@@ -137,7 +137,7 @@ function StackEditor({ target, stack }: { target: Target; stack: StackItem[] }) 
         <button type="button" class="btn" onClick={() => run(addLayer(stack, lib), () => rows.inserted(stack.length))}>
           Add layer
         </button>
-        <button type="button" class="btn" disabled={hasGap(stack) || layerCount < 1} onClick={() => run(insertGap(stack), () => rows.inserted(Math.min(1, stack.length)))}>
+        <button type="button" class="btn" disabled={hasGap(stack) || layerCount < 2} onClick={() => run(insertGap(stack), () => rows.inserted(Math.min(1, stack.length)))}>
           Add air gap
         </button>
         <span class="hint num">Total {fmtLen(stackThickness(stack))}, outside first</span>
@@ -262,7 +262,7 @@ export function WallsStep() {
           <h3>Wall layers</h3>
           <button type="button" class="btn" onClick={() => (libraryOpen.value = true)}>Materials</button>
         </div>
-        <StackEditor target="default" stack={d.wallDefault} />
+        <StackEditor key="default" target="default" stack={d.wallDefault} />
 
         <h3>Per-wall override</h3>
         <div class="row">
@@ -276,7 +276,7 @@ export function WallsStep() {
         {overrides.map((w) => (
           <div class="card" key={w}>
             <b>{targetTitle(w)}</b>
-            <StackEditor target={w} stack={d.wallOverrides[w]!} />
+            <StackEditor key={w} target={w} stack={d.wallOverrides[w]!} />
           </div>
         ))}
 

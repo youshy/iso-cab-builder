@@ -121,7 +121,7 @@ function LeafPanel({ which, leaf }: { which: Which; leaf: DoorLeaf }) {
           <button type="button" aria-label={`More ${title.toLowerCase()} latches`} onClick={() => set((l) => (l.latchCount += 1))}>+</button>
         </div>
       </div>
-      <LeafStack which={which} leaf={leaf} />
+      <LeafStack key={which} which={which} leaf={leaf} />
     </div>
   )
 }
