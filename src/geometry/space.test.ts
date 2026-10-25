@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { defaultDesign } from '../model/defaults'
+import { defaultDesign, defaultLibrary } from '../model/defaults'
 import type { Design, WallInterior } from '../model/schema'
 import { resolveDims } from './dimensions'
-import { cabBox, cabFit, cornerFlags, inactiveFacetWarnings, isAir } from './space'
+import { cabBox, cabFit, cornerFlags, inactiveFacetWarnings, isAir, materialAt } from './space'
 import { activeInterior } from './walls'
 
 const base = (): Design => {
@@ -74,6 +74,47 @@ describe('isAir', () => {
     expect(isAir(d, { x: 530, y: 100, z: 100 })).toBe(false)
     expect(isAir(d, { x: 560, y: 100, z: 100 })).toBe(true)
     expect(isAir(d, { x: 520, y: 500, z: 100 })).toBe(true)
+  })
+})
+
+describe('materialAt', () => {
+  const lib = defaultLibrary()
+  const id = (d: Design, p: { x: number; y: number; z: number }) => materialAt(d, lib, p)?.id ?? null
+  it('air is null; untreated walls give the innermost layer, liner side with a gap', () => {
+    const d = base()
+    d.sim.cabId = ''
+    const { inner } = resolveDims(d)
+    expect(id(d, { x: inner.x / 2, y: inner.y / 2, z: inner.z / 2 })).toBeNull()
+    expect(id(d, { x: -1, y: 100, z: 100 })).toBe('mdf')
+    d.wallOverrides.top = [
+      { kind: 'layer', materialId: 'mdf', thickness: 18 },
+      { kind: 'gap', width: 20, decoupling: 'strips', fill: 'empty', fillMaterialId: 'rockwool' },
+      { kind: 'layer', materialId: 'osb', thickness: 12 },
+    ]
+    expect(id(d, { x: 100, y: resolveDims(d).inner.y + 1, z: 100 })).toBe('osb')
+  })
+  it('treatment beats facet; facet beats wall; cab is plywood', () => {
+    const d = base()
+    d.interior.left = facets()
+    d.treatments = [{ id: 't', surface: { wall: 'left' }, materialId: 'foam', thickness: 30 }]
+    expect(id(d, { x: 5, y: 500, z: 90 })).toBe('plywood')
+    expect(id(d, { x: 12 + 90 * Math.tan((7 * Math.PI) / 180) + 15, y: 500, z: 90 })).toBe('foam')
+    const b = cabBox(d, d.cabs[0])
+    expect(id(d, { x: (b.min.x + b.max.x) / 2, y: 100, z: (b.min.z + b.max.z) / 2 })).toBe('plywood')
+  })
+  it('panel slab with insulation gives the insulation; panel treatment beats panel', () => {
+    const d = base()
+    d.sim.cabId = ''
+    d.panels.push({
+      id: 'p', normal: 'x', position: 500, u0: 0, u1: 400, v0: 0, v1: 300,
+      layers: [{ kind: 'layer', materialId: 'mdf', thickness: 18 }],
+      insulation: null,
+    })
+    expect(id(d, { x: 510, y: 100, z: 100 })).toBe('mdf')
+    d.panels[0].insulation = { materialId: 'rockwool', thickness: 30 }
+    expect(id(d, { x: 510, y: 100, z: 100 })).toBe('rockwool')
+    d.treatments = [{ id: 't', surface: { panelId: 'p', side: 'neg' }, materialId: 'carpet', thickness: 8 }]
+    expect(id(d, { x: 496, y: 100, z: 100 })).toBe('carpet')
   })
 })
 
