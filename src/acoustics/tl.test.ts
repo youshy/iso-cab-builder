@@ -127,4 +127,15 @@ describe('escape', () => {
     b.wallDefault = [mdf(25), mdf(25), mdf(25)]
     expect(escape(b, lib).worst).toBeGreaterThan(escape(a, lib).worst)
   })
+  it('door leaves lighter than the wall lower the box TL', () => {
+    const base = defaultDesign()
+    const light = structuredClone(base)
+    const thin: Layer[] = [{ kind: 'layer', materialId: 'plywood', thickness: 9 }]
+    light.door.outer.stack = thin
+    light.door.inner.stack = thin
+    const a = escape(base, lib).tlBox
+    const b = escape(light, lib).tlBox
+    expect(b).not.toEqual(a)
+    expect(b[2]).toBeLessThan(a[2])
+  })
 })

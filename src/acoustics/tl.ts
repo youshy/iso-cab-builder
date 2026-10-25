@@ -1,6 +1,8 @@
+import { SPLIT_GAP, doorLayout, doorLeafLayers } from '../doors/doors'
+import { doorWall } from '../doors/side'
 import { resolveDims } from '../geometry/dimensions'
 import { WALLS, splitStack, wallStack } from '../geometry/walls'
-import type { Design, Layer, Library, StackItem, WallId } from '../model/schema'
+import type { Design, Gap, Layer, Library, StackItem, WallId } from '../model/schema'
 
 export const THIRD_OCTAVES = [
   50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000,
@@ -116,13 +118,36 @@ const FACE_AREA = (o: { x: number; y: number; z: number }, w: WallId): number =>
   return mm2 / 1e6
 }
 
-/** Radiating surfaces of the box. Door leaves are not modelled yet. */
+/** Double-leaf stack of the sound lock: outer leaf, between space, inner leaf. */
+function doorStack(d: Design, betweenDepth: number): StackItem[] {
+  const { outer, inner } = doorLeafLayers(d)
+  const gap: Gap = {
+    kind: 'gap',
+    width: Math.max(betweenDepth, 1),
+    decoupling: 'clips',
+    fill: d.door.between === 'air' ? 'empty' : 'insulation',
+    fillMaterialId: 'rockwool',
+  }
+  return [...outer, gap, ...inner]
+}
+
+/** Radiating surfaces of the box. The door leaves replace their area of the door wall. */
 function surfaces(d: Design, lib: Library): Surface[] {
   const { outer } = resolveDims(d)
-  return WALLS.map((w) => ({
-    area_m2: FACE_AREA(outer, w),
-    tl: toOctaves(tlStack(wallStack(d, w), lib).thirds),
-  }))
+  const dw = doorWall(d)
+  const door = doorLayout(d, lib)
+  const leaves = door.outer.leaves
+  const doorArea =
+    (leaves.reduce((a, l) => a + l.w, 0) + (leaves.length - 1) * SPLIT_GAP) * leaves[0].h / 1e6
+  const out = WALLS.map((w) => {
+    const face = FACE_AREA(outer, w)
+    return {
+      area_m2: w === dw ? Math.max(face - doorArea, 0) : face,
+      tl: toOctaves(tlStack(wallStack(d, w), lib).thirds),
+    }
+  })
+  out.push({ area_m2: doorArea, tl: toOctaves(tlStack(doorStack(d, door.betweenDepth), lib).thirds) })
+  return out
 }
 
 export function escape(
