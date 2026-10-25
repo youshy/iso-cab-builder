@@ -51,22 +51,50 @@ describe('buildParts joints', () => {
     expect(dims(named(ps, /^Back shell/)[0])).toEqual([1400, 1000])
   })
 
-  it('mitre', () => {
+  it('mitre: each layer cut to its own long point, bevel from the wall thicknesses', () => {
     const d = base()
     d.joint = 'mitre'
-    const side = named(parts(d).parts, /^Left\/Right shell/)[0]
-    expect(dims(side)).toEqual([1072, 522])
-    expect(side.bevels).toHaveLength(4)
-    expect(side.bevels.every((b) => b.angle === 45)).toBe(true)
+    const ps = parts(d).parts
+    const [ply, mdf] = named(ps, /^Left\/Right shell/)
+    expect(dims(ply)).toEqual([1072, 522])
+    expect(dims(mdf)).toEqual([1036, 486])
+    expect(dims(named(ps, /^Top\/Bottom shell, layer 2/)[0])).toEqual([1436, 486])
+    expect(dims(named(ps, /^Back shell, layer 2/)[0])).toEqual([1436, 1036])
+    expect(ply.bevels).toHaveLength(4)
+    expect(ply.bevels.every((b) => b.angle === 45)).toBe(true)
+    // Left wall 54 mm against 36 mm neighbours: its mitres are flatter, the neighbours' steeper.
+    d.wallOverrides.left = [...d.wallDefault, { kind: 'layer', materialId: 'mdf', thickness: 18 }]
+    const ps2 = parts(d).parts
+    const left = named(ps2, /^Left shell, layer 1/)[0]
+    expect(left.bevels.map((b) => b.angle)).toEqual([33.7, 33.7, 33.7, 33.7])
+    expect(dims(named(ps2, /^Left shell, layer 3/)[0])).toEqual([1072 - 2 * 24, 522 - 2 * 24])
+    const top = named(ps2, /^Top\/Bottom shell, layer 1/)[0]
+    expect(top.bevels.map((b) => b.angle).sort()).toEqual([45, 45, 45, 56.3])
   })
 
-  it('rebate adds half thickness per rebated edge', () => {
+  it('rebate: separately cut layers in a staggered lap, no machining', () => {
     const d = base()
     d.joint = 'rebate'
-    const { parts: ps } = parts(d)
-    expect(dims(named(ps, /^Top\/Bottom shell/)[0])).toEqual([1436, 522])
-    expect(dims(named(ps, /^Back shell/)[0])).toEqual([1436, 1036])
-    expect(named(ps, /^Top\/Bottom shell/)[0].notes.join(' ')).toMatch(/rebate 18 × 36/)
+    const ps = parts(d).parts
+    expect(dims(named(ps, /^Left\/Right shell, layer 1/)[0])).toEqual([1072, 522])
+    expect(dims(named(ps, /^Left\/Right shell, layer 2/)[0])).toEqual([1000, 486])
+    expect(dims(named(ps, /^Top\/Bottom shell, layer 1/)[0])).toEqual([1436, 522])
+    expect(dims(named(ps, /^Top\/Bottom shell, layer 2/)[0])).toEqual([1436, 486])
+    expect(dims(named(ps, /^Back shell, layer 1/)[0])).toEqual([1436, 1036])
+    expect(dims(named(ps, /^Back shell, layer 2/)[0])).toEqual([1400, 1000])
+    expect(ps.some((p) => p.notes.join(' ').includes('rebate'))).toBe(false)
+  })
+
+  it('rebate with a single layer: sides-past with a router rebate note on the sides', () => {
+    const d = base()
+    d.joint = 'rebate'
+    d.wallDefault = [{ kind: 'layer', materialId: 'plywood', thickness: 18 }]
+    const ps = parts(d).parts
+    const side = named(ps, /^Left\/Right shell/)[0]
+    expect(dims(side)).toEqual([1036, 486])
+    expect(side.notes).toContain('single layer: router rebate 9 × 18 on top/bottom edges')
+    expect(dims(named(ps, /^Top\/Bottom shell/)[0])).toEqual([1400, 486])
+    expect(named(ps, /^Top\/Bottom shell/)[0].notes).toEqual([])
   })
 
   it('air gap with clips: liner box from inner + 2 x liner', () => {
@@ -105,6 +133,28 @@ describe('buildParts joints', () => {
     expect(strips.length).toBeGreaterThan(0)
     expect(strips.every((p) => p.width === 50 && p.materialId === 'rubber' && p.thickness === 25)).toBe(true)
     expect(hardware.find((h) => h.name === 'Isolation clip')).toBeUndefined()
+  })
+})
+
+describe('buildParts middle boxes', () => {
+  it('two cavities: a middle box with its own step, strips once per wall', () => {
+    const d = base()
+    d.wallDefault = [
+      { kind: 'layer', materialId: 'plywood', thickness: 18 },
+      { kind: 'gap', width: 20, decoupling: 'strips', fill: 'empty', fillMaterialId: 'rockwool' },
+      { kind: 'layer', materialId: 'osb', thickness: 12 },
+      { kind: 'layer', materialId: 'mlv', thickness: 5 },
+      { kind: 'gap', width: 30, decoupling: 'strips', fill: 'empty', fillMaterialId: 'rockwool' },
+      { kind: 'layer', materialId: 'mdf', thickness: 18 },
+    ]
+    const ps = parts(d).parts
+    const mid = named(ps, /^Left\/Right middle box 1, layer 1/)
+    expect(mid).toHaveLength(1)
+    expect(mid[0].step).toBe('middle')
+    const strips = ps.filter((p) => p.kind === 'strip' && p.step === 'middle')
+    // a long and a short pair per wall, not per layer
+    expect(qty(strips)).toBe(6 * 4)
+    expect(strips[0].notes).toEqual(['around the middle box 1 panel perimeter'])
   })
 })
 

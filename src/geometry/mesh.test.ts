@@ -4,6 +4,7 @@ import { defaultDesign, defaultLibrary, defaultShop } from '../model/defaults'
 import type { Design, StackItem, WallInterior } from '../model/schema'
 import { resolveDims } from './dimensions'
 import { buildScene as scene } from './mesh'
+import { boxBounds } from './boxes'
 import { stackThickness, wallStack } from './walls'
 
 const lib = defaultLibrary()
@@ -188,9 +189,17 @@ describe('buildScene', () => {
     // The anti-goal: the cut list must match what is drawn.
     it('every wall layer solid off the door wall is a cut list part, with matching counts', () => {
       const r05 = (n: number) => Math.round(n * 2) / 2
-      const designs: Design[] = [base(), base(), base()]
-      designs[1].wallDefault = gap(25)
-      designs[2].joint = 'tops-past'
+      const designs: Design[] = []
+      for (const joint of ['sides-past', 'tops-past', 'rebate', 'mitre'] as const) {
+        for (const variant of ['plain', 'gap', 'override'] as const) {
+          const d = base()
+          d.joint = joint
+          if (variant === 'gap') d.wallDefault = gap(25)
+          // A thicker left wall: unequal mitres and laps against thinner neighbours.
+          if (variant === 'override') d.wallOverrides.left = [...d.wallDefault, { kind: 'layer', materialId: 'osb', thickness: 12 }]
+          designs.push(d)
+        }
+      }
       for (const d of designs) {
         const drawn = new Map<string, number>()
         for (const s of buildScene(d).solids.filter((x) => x.kind === 'layer' && x.wall !== 'front')) {
@@ -200,11 +209,93 @@ describe('buildScene', () => {
         }
         const listed = new Map<string, number>()
         for (const p of buildParts(d, lib, defaultShop()).parts) {
-          if ((p.step !== 'shell' && p.step !== 'liner') || p.kind === 'strip' || /^Front /.test(p.name)) continue
+          if (!['shell', 'middle', 'liner'].includes(p.step) || p.kind === 'strip' || /^Front /.test(p.name)) continue
           const k = `${p.materialId} ${p.thickness} ${p.length} ${p.width}`
           listed.set(k, (listed.get(k) ?? 0) + p.qty)
         }
         expect(drawn).toEqual(listed)
+      }
+    })
+
+    describe('boxes are closed and no two wall layers overlap', () => {
+      type P3 = [number, number, number]
+      const pts = (s: { vertices: number[] }): P3[] =>
+        Array.from({ length: s.vertices.length / 3 }, (_, i) => [s.vertices[3 * i], s.vertices[3 * i + 1], s.vertices[3 * i + 2]] as P3)
+      const sub = (a: P3, b: P3): P3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+      const cross = (a: P3, b: P3): P3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+      const dot = (a: P3, b: P3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+      /** Volume of a closed solid: sum of signed tetrahedra against the origin. */
+      const volume = (s: { vertices: number[]; indices: number[] }) => {
+        const v = pts(s)
+        let sum = 0
+        for (let i = 0; i < s.indices.length; i += 3) {
+          const [a, b, c] = [v[s.indices[i]], v[s.indices[i + 1]], v[s.indices[i + 2]]]
+          sum += dot(a, cross(b, c)) / 6
+        }
+        return Math.abs(sum)
+      }
+      /** Strict inside test for a convex solid: on the inner side of every face triangle. */
+      const inside = (s: { vertices: number[]; indices: number[] }) => {
+        const v = pts(s)
+        const c = v.reduce((a, p) => [a[0] + p[0] / v.length, a[1] + p[1] / v.length, a[2] + p[2] / v.length] as P3, [0, 0, 0] as P3)
+        const planes: [P3, P3][] = []
+        for (let i = 0; i < s.indices.length; i += 3) {
+          const [a, b, cc] = [v[s.indices[i]], v[s.indices[i + 1]], v[s.indices[i + 2]]]
+          let n = cross(sub(b, a), sub(cc, a))
+          if (Math.hypot(...n) < 1e-9) continue
+          if (dot(n, sub(c, a)) > 0) n = [-n[0], -n[1], -n[2]]
+          planes.push([n, a])
+        }
+        return (p: P3) => planes.every(([n, a]) => dot(n, sub(p, a)) < -1e-6 * Math.hypot(...n))
+      }
+      const aabb = (s: { vertices: number[] }) => [0, 1, 2].map((i) => r(s, i as 0 | 1 | 2))
+      const isBox = (s: { vertices: number[] }) => [0, 1, 2].every((i) => new Set(s.vertices.filter((_, k) => k % 3 === i)).size <= 2)
+      /** Intersection volume: exact for two axis-aligned boxes, sampled on a 1.5 mm grid otherwise. */
+      const overlap = (s: Solid, t: Solid) => {
+        const [A, B] = [aabb(s), aabb(t)]
+        const I = A.map(([a0, a1], i) => [Math.max(a0, B[i][0]), Math.min(a1, B[i][1])])
+        if (I.some(([a, b]) => b - a <= 1e-6)) return 0
+        if (isBox(s) && isBox(t)) return I.reduce((v, [a, b]) => v * (b - a), 1)
+        const [inS, inT] = [inside(s), inside(t)]
+        const h = 1.5
+        let n = 0
+        for (let x = I[0][0] + 0.3137; x < I[0][1]; x += h)
+          for (let y = I[1][0] + 0.2719; y < I[1][1]; y += h)
+            for (let z = I[2][0] + 0.4441; z < I[2][1]; z += h) if (inS([x, y, z]) && inT([x, y, z])) n++
+        return n * h ** 3
+      }
+      type Solid = ReturnType<typeof buildScene>['solids'][number]
+      const stacks: [string, StackItem[]][] = [
+        ['two layers', defaultDesign().wallDefault],
+        ['gap', gap(25)],
+        ['three layers', [
+          { kind: 'layer', materialId: 'plywood', thickness: 18 },
+          { kind: 'layer', materialId: 'mdf', thickness: 18 },
+          { kind: 'layer', materialId: 'osb', thickness: 12 },
+        ]],
+      ]
+      for (const joint of ['sides-past', 'tops-past', 'rebate', 'mitre'] as const) {
+        for (const [label, stack] of stacks) {
+          it(`${joint}, ${label}`, () => {
+            const d = base()
+            d.joint = joint
+            d.wallDefault = stack
+            d.door.kind = 'wall' // no cutouts, so every box should be a closed shell
+            const layers = buildScene(d).solids.filter((x) => x.kind === 'layer')
+            for (let i = 0; i < layers.length; i++) {
+              for (let j = i + 1; j < layers.length; j++) {
+                expect(overlap(layers[i], layers[j]), `${layers[i].name} x ${layers[j].name}`).toBeLessThan(1)
+              }
+            }
+            const bs = boxBounds(d)
+            bs.forEach((b, k) => {
+              const part = k === 0 ? 'shell' : k === bs.length - 1 ? 'liner' : 'middle'
+              const vol = (r3: Record<'x' | 'y' | 'z', [number, number]>) => (['x', 'y', 'z'] as const).reduce((v, a) => v * (r3[a][1] - r3[a][0]), 1)
+              const drawn = layers.filter((x) => x.part === part).reduce((v, x) => v + volume(x), 0)
+              expect(drawn).toBeCloseTo(vol(b.outer) - vol(b.cavity), 0)
+            })
+          })
+        }
       }
     })
 

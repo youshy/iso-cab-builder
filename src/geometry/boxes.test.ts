@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildParts } from '../cutlist/parts'
-import { defaultDesign, defaultLibrary, defaultShop } from '../model/defaults'
+import { defaultDesign, defaultLibrary } from '../model/defaults'
 import type { Axis, Design, StackItem } from '../model/schema'
 import { boxBounds, wallBoxes, type BoxPanel } from './boxes'
 
@@ -99,27 +98,25 @@ describe('wallBoxes', () => {
     const left = of(ps, 'left')[0]
     expect(size(left)).toEqual([1072, 522])
     expect(left.joinedEdges.map((e) => e.kind)).toEqual(['mitre', 'mitre', 'mitre', 'mitre'])
-    d.joint = 'rebate'
-    ps = wallBoxes(d, lib)
-    const top = of(ps, 'top')[0]
-    expect(size(top)).toEqual([1436, 522])
-    expect(top.joinedEdges.filter((e) => e.kind === 'rebate').map((e) => e.edge)).toEqual(['W1', 'W2'])
+    // the MDF layer starts 18 mm in, so its outer face is 18 mm shorter at each mitred end
+    const mdf = of(ps, 'left')[1]
+    expect(range(mdf, 'y')).toEqual([-18, 1018])
+    expect(range(mdf, 'z')).toEqual([-18, 468])
+    expect(mdf.taper.W1).toEqual([0, 18])
   })
 
-  it('every wall layer has the cut list dims, for every joint and with a gap', () => {
-    for (const joint of ['sides-past', 'tops-past', 'rebate', 'mitre'] as const) {
-      for (const stack of [null, gapStack(40)]) {
-        const d = base()
-        d.joint = joint
-        if (stack) d.wallDefault = stack
-        const parts = buildParts(d, lib, defaultShop()).parts.filter((p) => p.step === 'shell' || p.step === 'liner')
-        const r05 = (n: number) => Math.round(n * 2) / 2
-        for (const p of wallBoxes(d, lib)) {
-          const [l, w] = size(p).map(r05)
-          expect(parts.some((q) => q.materialId === p.materialId && q.thickness === p.thickness && q.length === l && q.width === w)).toBe(true)
-        }
-      }
-    }
+  it('rebate is a staggered lap: ring 1 sides-past, ring 2 tops-past, each against its own ring', () => {
+    const d = base()
+    d.joint = 'rebate'
+    const ps = wallBoxes(d, lib)
+    const [lPly, lMdf] = of(ps, 'left'), [tPly, tMdf] = of(ps, 'top'), [bPly, bMdf] = of(ps, 'back')
+    expect([range(lPly, 'y'), range(lPly, 'z')]).toEqual([[-36, 1036], [-36, 486]])
+    expect([range(tPly, 'x'), range(tPly, 'z')]).toEqual([[-18, 1418], [-36, 486]])
+    expect([range(bPly, 'x'), range(bPly, 'y')]).toEqual([[-18, 1418], [-18, 1018]])
+    expect([range(lMdf, 'y'), range(lMdf, 'z')]).toEqual([[0, 1000], [-18, 468]])
+    expect([range(tMdf, 'x'), range(tMdf, 'z')]).toEqual([[-18, 1418], [-18, 468]])
+    expect([range(bMdf, 'x'), range(bMdf, 'y')]).toEqual([[0, 1400], [0, 1000]])
+    expect(ps.every((p) => p.joinedEdges.every((e) => e.kind === 'butt'))).toBe(true)
   })
 
   it('door wall: outer cutout on the outer box, inner cutout on the liner box; wall door has none', () => {

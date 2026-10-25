@@ -372,7 +372,7 @@ export function InteriorStep() {
   const viewOf = (v: 'plan' | 'front' | 'side', label: string) => (
     <div class="view" key={v}>
       <span class="lbl">{label}</span>
-      <SectionView design={d} view={v} highlight={w} compare={cmp} exaggerate={exaggerate.value} onSelectWall={pick} />
+      <SectionView design={d} lib={library.value} view={v} highlight={w} compare={cmp} exaggerate={exaggerate.value} onSelectWall={pick} />
     </div>
   )
   return (

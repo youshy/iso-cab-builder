@@ -25,7 +25,7 @@ export type BoxPanel = {
   layerIndex: number
   materialId: string
   thickness: number
-  /** Positioned slab in the domain frame (mm). Mitred: the long-point bounds of the laminate; `taper` sets each layer in. */
+  /** Positioned slab in the domain frame (mm): the layer's bounds, i.e. its cut size. Mitred: its outer (long-point) face. */
   min: Vec3
   max: Vec3
   /** In-plane axes; length >= width. */
@@ -33,7 +33,7 @@ export type BoxPanel = {
   widthAxis: Axis
   /** Edges that meet another panel of the same box, in L1, L2, W1, W2 order. */
   joinedEdges: { edge: PanelEdge; kind: JointKind }[]
-  /** How far each edge is set in at the layer's outer and inner face: non-zero on mitred edges only. */
+  /** How far each edge is set in at the layer's outer and inner face (from min/max): non-zero on mitred edges only. */
   taper: Record<PanelEdge, Range>
   /** Door opening in domain coordinates: u along lengthAxis, v along widthAxis. */
   cutout: { u0: number; u1: number; v0: number; v1: number } | null
@@ -113,16 +113,29 @@ export function cavityOutside(d: Design, w: WallId, boxIndex: number): Gap | nul
   return shares(d, boxCount(d))[w][boxIndex]?.outside ?? null
 }
 
-/** How far a wall's panel reaches along in-plane axis `a`: to the box's outer face, its cavity, or half-way (rebate). */
-function reach(w: WallId, a: Axis, joint: Design['joint']): 'outer' | 'cavity' | 'rebate' {
-  if (joint === 'mitre') return 'outer'
+/**
+ * Butt-joint rule for one wall along in-plane axis `a`: does the panel run to the outer face of the ring it
+ * belongs to, or stop at its cavity face? Sides-past runs the sides through; tops-past the top and bottom.
+ * Back and front sit inside the ring in both.
+ */
+function reach(w: WallId, a: Axis, rule: 'sides-past' | 'tops-past'): 'outer' | 'cavity' {
   const n = wallNormal(w)
-  if (n === 'x') return joint === 'tops-past' && a === 'y' ? 'cavity' : 'outer'
-  if (n === 'y') return a === 'z' || joint === 'tops-past' ? 'outer' : joint === 'rebate' ? 'rebate' : 'cavity'
-  return joint === 'rebate' ? 'rebate' : 'cavity'
+  if (n === 'x') return rule === 'tops-past' && a === 'y' ? 'cavity' : 'outer'
+  if (n === 'y') return a === 'z' || rule === 'tops-past' ? 'outer' : 'cavity'
+  return 'cavity'
 }
 
-/** Every wall layer of every box as a positioned slab, with its joints and door cutout. */
+/**
+ * Every wall layer of every box as a positioned slab, with its joints and door cutout.
+ *
+ * Joints, per box:
+ * - sides-past / tops-past: each wall's laminate is one panel shape, butted by the rule.
+ * - rebate: a staggered lap of separately cut layers (no machining). Layer ring j is the j-th layer of every
+ *   wall; even rings follow sides-past, odd rings tops-past, each against the same ring of its neighbours.
+ *   A wall with a single layer is plain sides-past; the cut list notes the router rebate.
+ * - mitre: every layer runs to the box's outer face, with its mitred ends tapering inward (45 degrees for
+ *   equal thicknesses). min/max are the layer's own outer face; `taper` sets the inner face in.
+ */
 export function wallBoxes(d: Design, lib: Library): BoxPanel[] {
   const { inner } = resolveDims(d)
   const n = boxCount(d)
@@ -137,6 +150,16 @@ export function wallBoxes(d: Design, lib: Library): BoxPanel[] {
     if (k === n - 1) return door.inner.cutout
     return door.middleCutouts[k - 1] ?? door.inner.cutout
   }
+  /** Depth of layer j of a wall's share, from the box's outer face; a wall without that layer is passed entirely. */
+  const depthOf = (share: Share, j: number): Range => {
+    let at = 0
+    for (let i = 0; i < share.layers.length; i++) {
+      const t = share.layers[i].thickness
+      if (i === j) return [at, at + t]
+      at += t
+    }
+    return [share.t, share.t]
+  }
 
   for (let k = 0; k < n; k++) {
     const b = bounds(inner, sh, k)
@@ -144,48 +167,55 @@ export function wallBoxes(d: Design, lib: Library): BoxPanel[] {
       const share = sh[w][k]
       if (share.layers.length === 0 || share.t <= 0) continue
       const nAxis = wallNormal(w)
-      const [p, q] = wallPlaneAxes(w)
-      const ext = {} as Record<Axis, Range>
-      for (const a of [p, q]) {
-        const [lo, hi] = AXIS_WALLS[a]
-        const r = reach(w, a, d.joint)
-        const f = r === 'outer' ? 1 : r === 'rebate' ? 0.5 : 0
-        ext[a] = [b.cavity[a][0] - f * sh[lo][k].t, b.cavity[a][1] + f * sh[hi][k].t]
-      }
-      const len = (a: Axis) => ext[a][1] - ext[a][0]
-      const [L, W] = len(q) > len(p) ? [q, p] : [p, q]
-
-      const joinedEdges: BoxPanel['joinedEdges'] = []
-      const rate: Partial<Record<PanelEdge, number>> = {}
-      const edges: [PanelEdge, Axis, 0 | 1][] = [['L1', W, 0], ['L2', W, 1], ['W1', L, 0], ['W2', L, 1]]
-      for (const [edge, a, end] of edges) {
-        const tn = sh[AXIS_WALLS[a][end]][k].t
-        if (tn <= 0) continue
-        const kind: JointKind = d.joint === 'mitre' ? 'mitre' : reach(w, a, d.joint) === 'rebate' ? 'rebate' : 'butt'
-        joinedEdges.push({ edge, kind })
-        // A mitre meets the neighbour's inner face at this wall's inner face: 45 degrees for equal thicknesses.
-        if (kind === 'mitre') rate[edge] = tn / share.t
-      }
-
-      let cutout: BoxPanel['cutout'] = null
-      const size = w === side ? cutSize(k) : null
-      if (size) {
-        const wAxis = doorWidthAxis(side)
-        const rw: Range = [inner[wAxis] / 2 - size.w / 2, inner[wAxis] / 2 + size.w / 2]
-        const rh: Range = [inner.y / 2 - size.h / 2, inner.y / 2 + size.h / 2]
-        const [ru, rv] = L === wAxis ? [rw, rh] : [rh, rw]
-        cutout = { u0: ru[0], u1: ru[1], v0: rv[0], v1: rv[1] }
-      }
-
+      const plane = wallPlaneAxes(w)
       const high = HIGH.has(w)
-      let depth = 0
       share.layers.forEach((l, j) => {
-        const [s0, s1] = [depth, depth + l.thickness]
-        depth = s1
+        const [s0, s1] = depthOf(share, j)
         if (l.thickness <= 0) return
-        const nr: Range = high ? [b.outer[nAxis][1] - s1, b.outer[nAxis][1] - s0] : [b.outer[nAxis][0] + s0, b.outer[nAxis][0] + s1]
+        const ext = {} as Record<Axis, Range>
+        const rate: Partial<Record<Axis, [number, number]>> = {}
+        for (const a of plane) {
+          const [lo, hi] = AXIS_WALLS[a]
+          const [tLo, tHi] = [sh[lo][k].t, sh[hi][k].t]
+          if (d.joint === 'mitre') {
+            // A mitre meets the neighbour's inner face at this wall's inner face.
+            const r: [number, number] = [tLo / share.t, tHi / share.t]
+            rate[a] = r
+            ext[a] = [b.outer[a][0] + s0 * r[0], b.outer[a][1] - s0 * r[1]]
+          } else if (d.joint === 'rebate') {
+            const idx = reach(w, a, j % 2 === 0 ? 'sides-past' : 'tops-past') === 'outer' ? 0 : 1
+            ext[a] = [b.outer[a][0] + depthOf(sh[lo][k], j)[idx], b.outer[a][1] - depthOf(sh[hi][k], j)[idx]]
+          } else {
+            const f = reach(w, a, d.joint) === 'outer' ? 1 : 0
+            ext[a] = [b.cavity[a][0] - f * tLo, b.cavity[a][1] + f * tHi]
+          }
+        }
+        const len = (a: Axis) => ext[a][1] - ext[a][0]
+        const [L, W] = len(plane[1]) > len(plane[0]) ? [plane[1], plane[0]] : [plane[0], plane[1]]
+
+        const joinedEdges: BoxPanel['joinedEdges'] = []
         const taper = NO_TAPER()
-        for (const e of Object.keys(rate) as PanelEdge[]) taper[e] = [s0 * rate[e]!, s1 * rate[e]!]
+        const edges: [PanelEdge, Axis, 0 | 1][] = [['L1', W, 0], ['L2', W, 1], ['W1', L, 0], ['W2', L, 1]]
+        for (const [edge, a, end] of edges) {
+          const nb = AXIS_WALLS[a][end]
+          if (sh[nb][k].t <= 0) continue
+          const routed = d.joint === 'rebate' && share.layers.length === 1 && nAxis === 'x' && wallNormal(nb) === 'y'
+          const kind: JointKind = d.joint === 'mitre' ? 'mitre' : routed ? 'rebate' : 'butt'
+          joinedEdges.push({ edge, kind })
+          if (kind === 'mitre') taper[edge] = [0, l.thickness * rate[a]![end]]
+        }
+
+        let cutout: BoxPanel['cutout'] = null
+        const size = w === side ? cutSize(k) : null
+        if (size) {
+          const wAxis = doorWidthAxis(side)
+          const rw: Range = [inner[wAxis] / 2 - size.w / 2, inner[wAxis] / 2 + size.w / 2]
+          const rh: Range = [inner.y / 2 - size.h / 2, inner.y / 2 + size.h / 2]
+          const [ru, rv] = L === wAxis ? [rw, rh] : [rh, rw]
+          cutout = { u0: ru[0], u1: ru[1], v0: rv[0], v1: rv[1] }
+        }
+
+        const nr: Range = high ? [b.outer[nAxis][1] - s1, b.outer[nAxis][1] - s0] : [b.outer[nAxis][0] + s0, b.outer[nAxis][0] + s1]
         const r: Record<Axis, Range> = { ...ext, [nAxis]: nr }
         panels.push({
           wall: w, boxIndex: k, layerIndex: j, materialId: l.materialId, thickness: l.thickness,
@@ -198,6 +228,9 @@ export function wallBoxes(d: Design, lib: Library): BoxPanel[] {
   }
   return panels
 }
+
+/** Bevel of a mitred edge, degrees from the face: 45 when the two walls are equally thick. */
+export const mitreAngle = (p: BoxPanel, e: PanelEdge): number => (Math.atan(p.taper[e][1] / p.thickness) * 180) / Math.PI
 
 /** Box label of a panel: the outermost box is the shell, the innermost (when there are several) the liner. */
 export function boxPart(boxIndex: number, boxes: number): 'shell' | 'liner' | 'middle' {

@@ -59,7 +59,6 @@ function box(name: string, kind: SolidKind, wall: WallId | undefined, r: Record<
   ], r.z[0], r.z[1])
 }
 
-const otherAxes = (n: Axis): [Axis, Axis] => AXES.filter((a) => a !== n) as [Axis, Axis]
 
 /**
  * Pure mesh description of the design in domain coordinates (mm, origin at the inner

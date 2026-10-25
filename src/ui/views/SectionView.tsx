@@ -6,12 +6,13 @@ import { panelExtent, panelTreatments, wallTreatments } from '../../geometry/tre
 import { activeInterior, stackThickness, wallNormal, wallStack, WALLS } from '../../geometry/walls'
 import { SPLIT_GAP, type DoorLayout, type LeafLayout, type WallDoorLayout } from '../../doors/doors'
 import { doorWall, doorWidthAxis, widthEdgeEnd } from '../../doors/side'
-import type { Axis, Design, Vec3, WallId } from '../../model/schema'
-import { library } from '../../model/store'
+import type { Axis, Design, Library, Vec3, WallId } from '../../model/schema'
 
 type View = 'plan' | 'front' | 'side'
 type Props = {
   design: Design
+  /** Materials and hardware: the door layout decides the wall cutouts. */
+  lib: Library
   view: View
   highlight?: WallId
   compare?: Design | null
@@ -43,7 +44,7 @@ const wallSwinger = (w: WallDoorLayout): Swinger => ({
   which: 'wall', leaves: [w.panel], swingRadius: w.swingRadius, direction: 'out', hingeEdge: w.hingeEdge,
 })
 
-export function SectionView({ design: d, view, highlight, compare, exaggerate, onSelectWall, doors }: Props) {
+export function SectionView({ design: d, lib, view, highlight, compare, exaggerate, onSelectWall, doors }: Props) {
   const [ha, va] = AXES[view]
   const cut = (['x', 'y', 'z'] as Axis[]).find((a) => a !== ha && a !== va)!
   const k = (a: Axis) => (exaggerate && view === 'plan' && a === 'z' ? DEPTH_EXAGGERATION : 1)
@@ -153,7 +154,7 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
       </path>,
     )
   })
-  for (const p of wallBoxes(d, library.value)) {
+  for (const p of wallBoxes(d, lib)) {
     const n = wallNormal(p.wall)
     if (n !== ha && n !== va) continue
     const along = n === ha ? va : ha

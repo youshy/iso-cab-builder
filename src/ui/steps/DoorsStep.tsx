@@ -236,7 +236,7 @@ export function DoorsStep() {
   const viewOf = (v: 'plan' | 'front' | 'side', label: string) => (
     <div class="view" key={v}>
       <span class="lbl">{label}</span>
-      <SectionView design={d} view={v} exaggerate={exaggerate.value} doors={l} />
+      <SectionView design={d} lib={library.value} view={v} exaggerate={exaggerate.value} doors={l} />
     </div>
   )
   const sideOptions: [Design['door']['side'], string][] = [

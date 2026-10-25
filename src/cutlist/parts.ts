@@ -1,6 +1,6 @@
 import { doorLayout } from '../doors/doors'
 import { doorWall } from '../doors/side'
-import { AXIS_WALLS, boxBounds, boxPart, cavityOutside, facetSpan, wallBoxes, wallSpan, type BoxPanel, type PanelEdge } from '../geometry/boxes'
+import { boxBounds, boxPart, cavityOutside, facetSpan, mitreAngle, wallBoxes, wallSpan, type BoxPanel } from '../geometry/boxes'
 import { resolveDims } from '../geometry/dimensions'
 import { packingDepth, panelLength, steps } from '../geometry/facets'
 import { clampTo, panelPlane } from '../geometry/panels'
@@ -9,7 +9,7 @@ import { activeInterior, wallPlaneAxes, WALLS } from '../geometry/walls'
 import { CLIP_GRID, DECOUPLING_STRIP_MATERIAL, materialOrFirst, PACKER_WIDTH } from '../model/defaults'
 import type { Design, Library, Shop, WallId } from '../model/schema'
 
-export type BuildStep = 'shell' | 'liner' | 'facets' | 'panels' | 'treatment' | 'doors'
+export type BuildStep = 'shell' | 'middle' | 'liner' | 'facets' | 'panels' | 'treatment' | 'doors'
 export type Bevel = { edge: 'L1' | 'L2' | 'W1' | 'W2'; angle: number }
 export type PartKind = 'panel' | 'roll' | 'strip' | 'packer' | 'filler' | 'wedge' | 'frame' | 'leaf'
 export type Part = {
@@ -28,7 +28,7 @@ export type Part = {
 }
 export type HardwareItem = { name: string; qty: number; unit: 'pcs' | 'm' }
 
-export const STEP_ORDER: BuildStep[] = ['shell', 'liner', 'facets', 'panels', 'treatment', 'doors']
+export const STEP_ORDER: BuildStep[] = ['shell', 'middle', 'liner', 'facets', 'panels', 'treatment', 'doors']
 
 const STRIP_WIDTH = 50
 
@@ -86,15 +86,11 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
     a: p.max[p.lengthAxis] - p.min[p.lengthAxis],
     b: p.max[p.widthAxis] - p.min[p.widthAxis],
   })
-  const neighbour = (p: BoxPanel, e: PanelEdge): WallId =>
-    AXIS_WALLS[e[0] === 'L' ? p.widthAxis : p.lengthAxis][e[1] === '1' ? 0 : 1]
-  const rebateNote = (p: BoxPanel): string[] => {
-    const edges = p.joinedEdges.filter((e) => e.kind === 'rebate')
-    if (edges.length === 0) return []
-    const tt = panels.filter((q) => q.wall === p.wall && q.boxIndex === p.boxIndex).reduce((s, q) => s + q.thickness, 0)
-    const where = edges.length === 4 ? 'all four edges' : `${edges.map((e) => neighbour(p, e.edge)).join(' and ')} ${edges.length === 1 ? 'edge' : 'edges'}`
-    return [`rebate ${num(tt / 2)} × ${num(tt)} on ${where}`]
-  }
+  /** A single-layer wall in a rebate-jointed box: the side panels are routed to take the top and bottom. */
+  const rebateNote = (p: BoxPanel): string[] =>
+    p.joinedEdges.some((e) => e.kind === 'rebate')
+      ? [`single layer: router rebate ${num(p.thickness / 2)} × ${num(p.thickness)} on top/bottom edges`]
+      : []
   const doorNote = (p: BoxPanel): string[] => {
     if (p.wall !== dw) return []
     if (door.kind === 'wall') return ['hinged wall: see doors step']
@@ -105,30 +101,33 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
   }
 
   const stripMaterial = materialOrFirst(lib, DECOUPLING_STRIP_MATERIAL, ['roll'])
+  const decoupled = new Set<string>()
   for (const p of panels) {
     const part = boxPart(p.boxIndex, boxes)
-    const label = part === 'middle' ? `middle ${p.boxIndex}` : part
+    const label = part === 'middle' ? `middle box ${p.boxIndex}` : part
     const { a, b } = extentOf(p)
     const rest = `${label}, layer ${p.layerIndex + 1} (${matName(p.materialId)})`
     push({
       name: `${cap(p.wall)} ${rest}`, wall: p.wall, rest,
-      materialId: p.materialId, thickness: p.thickness, a, b, step: part === 'shell' ? 'shell' : 'liner',
-      bevels: p.joinedEdges.filter((e) => e.kind === 'mitre').map((e) => ({ edge: e.edge, angle: 45 })),
+      materialId: p.materialId, thickness: p.thickness, a, b, step: part,
+      bevels: p.joinedEdges.filter((e) => e.kind === 'mitre').map((e) => ({ edge: e.edge, angle: mitreAngle(p, e.edge) })),
       notes: [...rebateNote(p), ...doorNote(p)],
     })
-    // Decoupling of an inner box from the box outside it, once per wall.
-    const gap = p.layerIndex === 0 ? cavityOutside(d, p.wall, p.boxIndex) : null
+    // Decoupling of an inner box from the box outside it, once per wall and box.
+    const key = `${p.wall} ${p.boxIndex}`
+    const gap = decoupled.has(key) ? null : cavityOutside(d, p.wall, p.boxIndex)
+    decoupled.add(key)
     if (!gap) continue
     const [L, W] = [Math.max(a, b), Math.min(a, b)]
     if (gap.decoupling === 'strips') {
       push({
         name: 'Decoupling strip', materialId: stripMaterial, thickness: gap.width, a: L, b: STRIP_WIDTH,
-        qty: 2, step: 'liner', kind: 'strip', notes: ['around the liner panel perimeter'],
+        qty: 2, step: part, kind: 'strip', notes: [`around the ${label} panel perimeter`],
       })
       push({
         name: 'Decoupling strip', materialId: stripMaterial, thickness: gap.width,
-        a: Math.max(W - 2 * STRIP_WIDTH, 0), b: STRIP_WIDTH, qty: 2, step: 'liner', kind: 'strip',
-        notes: ['around the liner panel perimeter'],
+        a: Math.max(W - 2 * STRIP_WIDTH, 0), b: STRIP_WIDTH, qty: 2, step: part, kind: 'strip',
+        notes: [`around the ${label} panel perimeter`],
       })
     } else {
       addHw('Isolation clip', Math.max(4, (Math.floor(L / CLIP_GRID) + 1) * (Math.floor(W / CLIP_GRID) + 1)), 'pcs')

@@ -4,7 +4,7 @@ import { cabFit } from '../../geometry/space'
 import { newCab } from '../../model/defaults'
 import { applyCabEdit, matchPreset, presetSpeakers, SPEAKER_PRESETS } from '../../model/presets'
 import type { Cab, Design, Vec3 } from '../../model/schema'
-import { compareDesign, design, fmtLen, setDimMode, setInnerSource, update } from '../../model/store'
+import { compareDesign, design, fmtLen, library, setDimMode, setInnerSource, update } from '../../model/store'
 import { NumberField } from '../NumberField'
 import { Seg } from '../Seg'
 import { SectionView } from '../views/SectionView'
@@ -256,11 +256,11 @@ export function CabStep() {
             <>
               <div class="view">
                 <span class="lbl">Plan section, cut at mid-height</span>
-                <SectionView design={d} view="plan" compare={compareDesign.value} />
+                <SectionView design={d} lib={library.value} view="plan" compare={compareDesign.value} />
               </div>
               <div class="view">
                 <span class="lbl">Front section</span>
-                <SectionView design={d} view="front" compare={compareDesign.value} />
+                <SectionView design={d} lib={library.value} view="front" compare={compareDesign.value} />
               </div>
             </>
           )}
