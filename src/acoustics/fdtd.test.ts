@@ -4,8 +4,8 @@ import type { Design, Library, WallInterior } from '../model/schema'
 import { resolveDims } from '../geometry/dimensions'
 import { rectModes } from './analytic'
 import { findPeaks } from './spectrum'
-import { admittance, diverged, simulate, simulateTuned, sourcePoints, type SimMode, type SimResult } from './fdtd'
-import { speakerPositions } from '../geometry/space'
+import { admittance, diverged, simulate, simulateTuned, simAir, sourcePoints, type SimMode, type SimResult } from './fdtd'
+import { cabPose, speakerPositions } from '../geometry/space'
 
 const C = 343
 const dxAt = (fMax: number) => C / (10 * fMax) * 1000 // mm
@@ -223,5 +223,50 @@ describe('sourcePoints', () => {
         expect(pts[i].y).toBeCloseTo(s.p.y, 6)
       })
     }
+  })
+})
+
+describe('open-back baffle follows the cab turn', () => {
+  const open = (yaw: number): Design => {
+    const d = box(1400, 900, 1400)
+    d.cabs[0] = { ...d.cabs[0], w: 600, h: 400, d: 300, back: 'open', speakers: [{ x: 300, y: 200 }] }
+    d.sim.cabId = d.cabs[0].id
+    d.cabYaw = yaw
+    return d
+  }
+  const centreOf = (d: Design) => cabPose(d, d.cabs[0]).centre
+  it('yaw 0 keeps the baffle on the +z face and the cab body hollow', () => {
+    const d = open(0)
+    const c = centreOf(d), air = simAir(d)
+    expect(air({ x: c.x, y: c.y, z: c.z + 150 - 9 })).toBe(false)
+    expect(air({ x: c.x, y: c.y, z: c.z })).toBe(true)
+    expect(air({ x: c.x, y: c.y, z: c.z - 150 + 9 })).toBe(true)
+  })
+  it('yaw 90 puts it on the +x face', () => {
+    const d = open(90)
+    const c = centreOf(d), air = simAir(d)
+    expect(air({ x: c.x + 150 - 9, y: c.y, z: c.z })).toBe(false)
+    expect(air({ x: c.x - 150 + 9, y: c.y, z: c.z })).toBe(true)
+    expect(air({ x: c.x, y: c.y, z: c.z + 150 - 9 })).toBe(true)
+  })
+  it('yaw 180 puts it on the -z face', () => {
+    const d = open(180)
+    const c = centreOf(d), air = simAir(d)
+    expect(air({ x: c.x, y: c.y, z: c.z - 150 + 9 })).toBe(false)
+    expect(air({ x: c.x, y: c.y, z: c.z + 150 - 9 })).toBe(true)
+  })
+})
+
+describe('simulate source placement', () => {
+  it('a turned speaker gives a different response than an unturned one', { timeout: 60_000 }, () => {
+    const mk = (yaw: number) => {
+      const d = box(1400, 900, 1400)
+      d.cabs[0] = { ...d.cabs[0], w: 60, h: 60, d: 60, back: 'closed', speakers: [{ x: 30, y: 30 }] }
+      d.sim.cabId = d.cabs[0].id
+      d.cabYaw = yaw
+      return simulate(d, lib(), { fMax: 500, duration: 0.3 }).avgDb
+    }
+    const [a, b] = [mk(0), mk(90)]
+    expect(Math.max(...a.map((v, i) => Math.abs(v - b[i])))).toBeGreaterThan(0.05)
   })
 })

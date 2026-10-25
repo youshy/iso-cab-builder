@@ -11,7 +11,7 @@
  * Pure TS, no DOM: runs in a worker.
  */
 import { resolveDims } from '../geometry/dimensions'
-import { airTest, cabBox, materialTest, speakerPositions } from '../geometry/space'
+import { airTest, cabAxes, cabPose, materialTest, speakerPositions } from '../geometry/space'
 import type { Axis, Design, Library, Material, Vec3 } from '../model/schema'
 import { rectModes } from './analytic'
 import { findPeaks, spectrum } from './spectrum'
@@ -102,14 +102,22 @@ type Grid = {
 }
 
 /** Air test for the simulation: the open-back cab keeps only its baffle as a solid. */
-function simAir(d: Design): (p: Vec3) => boolean {
+export function simAir(d: Design): (p: Vec3) => boolean {
   const cab = d.sim.cabId === '' ? undefined : d.cabs.find((c) => c.id === d.sim.cabId)
   if (!cab || cab.back === 'closed') return airTest(d)
-  const b = cabBox(d, cab)
+  const { centre, yaw } = cabPose(d, cab)
+  const { facing, right } = cabAxes(yaw)
+  const [hw, hh, hd] = [cab.w / 2, cab.h / 2, cab.d / 2]
   const noCab = airTest({ ...d, sim: { ...d.sim, cabId: '' } })
-  return (p) =>
-    noCab(p) &&
-    !(p.x >= b.min.x && p.x <= b.max.x && p.y >= b.min.y && p.y <= b.max.y && p.z <= b.max.z && p.z >= b.max.z - BAFFLE)
+  // The baffle is a slab on the cab's front face, found in the cab's own frame so it follows the turn.
+  return (p) => {
+    if (!noCab(p)) return false
+    const dx = p.x - centre.x, dz = p.z - centre.z
+    const lf = dx * facing.x + dz * facing.z
+    return !(
+      lf <= hd && lf >= hd - BAFFLE && Math.abs(dx * right.x + dz * right.z) <= hw && Math.abs(p.y - centre.y) <= hh
+    )
+  }
 }
 
 /** Where the sources go: half a cell in front of each speaker, along its facing, capped at the far walls. */
