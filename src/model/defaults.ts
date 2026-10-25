@@ -144,3 +144,8 @@ export function materialOrFirst(lib: Library, preferredId: string, kinds: Materi
   if (lib.materials.some((m) => m.id === preferredId)) return preferredId
   return lib.materials.find((m) => kinds.includes(m.kind))?.id ?? preferredId
 }
+
+/** Cut list choices: decoupling strip material, packer strip width, clip grid pitch (all mm). */
+export const DECOUPLING_STRIP_MATERIAL = 'rubber'
+export const PACKER_WIDTH = 40
+export const CLIP_GRID = 400

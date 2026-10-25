@@ -4,8 +4,8 @@ import { resolveDims } from '../geometry/dimensions'
 import { packingDepth, panelLength, steps } from '../geometry/facets'
 import { clampTo, panelPlane } from '../geometry/panels'
 import { panelTreatments, wallIntrusion, wallTreatments } from '../geometry/treatments'
-import { activeInterior, splitStack, stackThickness, wallPlaneAxes, wallStack, WALLS } from '../geometry/walls'
-import { materialOrFirst } from '../model/defaults'
+import { activeInterior, splitStack, wallPlaneAxes, wallStack, WALLS } from '../geometry/walls'
+import { CLIP_GRID, DECOUPLING_STRIP_MATERIAL, materialOrFirst, PACKER_WIDTH } from '../model/defaults'
 import type { Axis, Design, Layer, Library, Shop, Vec3, WallId } from '../model/schema'
 
 export type BuildStep = 'shell' | 'liner' | 'facets' | 'panels' | 'treatment' | 'doors'
@@ -30,13 +30,9 @@ export type HardwareItem = { name: string; qty: number; unit: 'pcs' | 'm' }
 export const STEP_ORDER: BuildStep[] = ['shell', 'liner', 'facets', 'panels', 'treatment', 'doors']
 
 const STRIP_WIDTH = 50
-const CLIP_GRID = 400
-const PACKER_WIDTH = 40
-const DECOUPLING_STRIP_MATERIAL = 'rubber'
 /** Walls abutting earlier in this order run through; later ones are cut short. The front wall comes last. */
 const PRIORITY: WallId[] = ['back', 'left', 'right', 'top', 'bottom', 'front']
 const AXIS_WALLS: Record<Axis, [WallId, WallId]> = { x: ['left', 'right'], y: ['bottom', 'top'], z: ['back', 'front'] }
-const NAME: Record<WallId, string> = { left: 'side', right: 'side', top: 'top/bottom', bottom: 'top/bottom', back: 'back', front: 'front' }
 
 const r05 = (n: number) => Math.round(n * 2) / 2
 const r01 = (n: number) => Math.round(n * 10) / 10
@@ -52,6 +48,11 @@ type Draft = Omit<Part, 'id' | 'warnings' | 'qty' | 'bevels' | 'notes' | 'kind' 
   kind?: PartKind
   qty?: number
   bevels?: Bevel[]
+  /** Bevel on edges running along side `a` or `b` of the draft; mapped to L/W edges once the sides are ordered. */
+  tilt?: { angle: number; along: 'a' | 'b'; both: boolean }
+  /** Wall layer parts: merged across walls, the name lists the walls. */
+  wall?: WallId
+  rest?: string
   notes?: string[]
 }
 
@@ -93,6 +94,7 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
   const { inner } = resolveDims(d)
   const door = doorLayout(d, lib)
   const dw = doorWall(d)
+  const matName = (id: string) => lib.materials.find((m) => m.id === id)?.name ?? id
   const matKind = (id: string) => lib.materials.find((m) => m.id === id)?.kind
 
   const rollNote = (materialId: string, thickness: number, width: number): string | null => {
@@ -130,6 +132,7 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
     return [`cut opening ${num(leaf.cutout.w)}×${num(leaf.cutout.h)} centred`]
   }
 
+  const stripMaterial = materialOrFirst(lib, DECOUPLING_STRIP_MATERIAL, ['roll'])
   const addBox = (part: 'shell' | 'liner', cavity: Vec3, t: Record<WallId, number>) => {
     for (const w of WALLS) {
       const layers: Layer[] = split[w][part]
@@ -140,7 +143,8 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
         : []
       layers.forEach((l, k) => {
         push({
-          name: `${cap(part)} ${NAME[w]}${layers.length > 1 || split[w].gap ? `, layer ${k + 1}` : ''}`,
+          name: `${cap(w)} ${part}, layer ${k + 1} (${matName(l.materialId)})`,
+          wall: w, rest: `${part}, layer ${k + 1} (${matName(l.materialId)})`,
           materialId: l.materialId, thickness: l.thickness, a: bp.a, b: bp.b, step: part, bevels,
           notes: [...bp.notes, ...doorNote(w, part)],
         })
@@ -150,16 +154,16 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
         const [L, W] = [Math.max(bp.a, bp.b), Math.min(bp.a, bp.b)]
         if (gap.decoupling === 'strips') {
           push({
-            name: 'Decoupling strip', materialId: DECOUPLING_STRIP_MATERIAL, thickness: gap.width, a: L, b: STRIP_WIDTH,
+            name: 'Decoupling strip', materialId: stripMaterial, thickness: gap.width, a: L, b: STRIP_WIDTH,
             qty: 2, step: 'liner', kind: 'strip', notes: ['around the liner panel perimeter'],
           })
           push({
-            name: 'Decoupling strip', materialId: DECOUPLING_STRIP_MATERIAL, thickness: gap.width,
+            name: 'Decoupling strip', materialId: stripMaterial, thickness: gap.width,
             a: Math.max(W - 2 * STRIP_WIDTH, 0), b: STRIP_WIDTH, qty: 2, step: 'liner', kind: 'strip',
             notes: ['around the liner panel perimeter'],
           })
         } else {
-          addHw('Isolation clip', Math.max(4, Math.ceil(L / CLIP_GRID) * Math.ceil(W / CLIP_GRID)), 'pcs')
+          addHw('Isolation clip', Math.max(4, (Math.floor(L / CLIP_GRID) + 1) * (Math.floor(W / CLIP_GRID) + 1)), 'pcs')
         }
       }
     }
@@ -180,20 +184,22 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
       const tilt = r01(f.tilt)
       push({
         name: `${label} facet ${i + 1}`, materialId: wi.panelMaterialId, thickness: wi.panelThickness,
-        a: panelLength(f), b: sp, step: 'facets',
-        bevels: [{ edge: 'L1', angle: tilt }, { edge: 'L2', angle: tilt }],
+        a: panelLength(f), b: sp, step: 'facets', tilt: { angle: tilt, along: 'b', both: true },
       })
-      push({
-        name: `${label} packer ${i + 1}`, materialId: wi.panelMaterialId, thickness: r2(pd), a: sp, b: PACKER_WIDTH,
-        step: 'facets', kind: 'packer', bevels: [{ edge: 'L1', angle: tilt }], notes: ['at the free edge'],
-      })
-      if (wi.behind === 'insulation') {
+      const flat = r2(pd) <= 0
+      if (!flat) {
+        push({
+          name: `${label} packer ${i + 1}`, materialId: wi.panelMaterialId, thickness: r2(pd), a: sp, b: PACKER_WIDTH,
+          step: 'facets', kind: 'packer', tilt: { angle: tilt, along: 'a', both: false }, notes: ['at the free edge'],
+        })
+      }
+      if (wi.behind === 'insulation' && !flat) {
         push({
           name: `${label} bay fill ${i + 1}`, materialId: materialOrFirst(lib, 'rockwool', ['fill']), thickness: r2(pd),
           a: f.width, b: sp, step: 'facets', kind: 'filler', notes: ['cut to a wedge, tapering to the hinge edge'],
         })
       }
-      if (wi.closure === 'fillers' && pd > 0) {
+      if (wi.closure === 'fillers' && !flat) {
         push({
           name: `${label} end wedge ${i + 1}`, materialId: wi.panelMaterialId, thickness: wi.panelThickness,
           a: f.width, b: pd, qty: 2, step: 'facets', kind: 'wedge', notes: ['triangle: legs width and packing depth'],
@@ -203,6 +209,7 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
     })
     if (wi.closure === 'fillers') {
       steps(wi).forEach(({ delta }, i) => {
+        if (r05(Math.abs(delta)) <= 0) return
         push({
           name: `${label} filler strip ${i + 1}`, materialId: wi.panelMaterialId, thickness: wi.panelThickness,
           a: sp, b: Math.abs(delta), step: 'facets', kind: 'filler',
@@ -245,8 +252,7 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
         wi.facets.forEach((f, i) => {
           push({
             name: `${name} facet ${i + 1}`, materialId: t.materialId, thickness: t.thickness, a: panelLength(f), b: sp,
-            step: 'treatment',
-            bevels: f.tilt > 0 ? [{ edge: 'L1', angle: r01(f.tilt) }, { edge: 'L2', angle: r01(f.tilt) }] : [],
+            step: 'treatment', tilt: { angle: r01(f.tilt), along: 'b', both: true },
           })
         })
       } else {
@@ -279,6 +285,13 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
       if (n) notes.unshift(n)
     }
     const bevels = (dr.bevels ?? []).map((b) => ({ ...b, angle: r01(b.angle) }))
+    if (dr.tilt && r01(dr.tilt.angle) > 0) {
+      // Edges running along the side that ended up as the length are L edges, otherwise W edges.
+      const lengthIsA = dr.a >= dr.b
+      const isLong = (dr.tilt.along === 'a') === lengthIsA
+      const edges: Bevel['edge'][] = isLong ? ['L1', 'L2'] : ['W1', 'W2']
+      for (const edge of dr.tilt.both ? edges : edges.slice(0, 1)) bevels.push({ edge, angle: r01(dr.tilt.angle) })
+    }
     const warnings: string[] = []
     for (const angle of new Set(bevels.map((b) => b.angle))) {
       if (angle > shop.maxBevel) {
@@ -292,14 +305,24 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
     }
   })
 
-  const merged = new Map<string, Part>()
-  for (const p of finished) {
-    const key = JSON.stringify({ ...p, qty: 0 })
+  const merged = new Map<string, { part: Part; walls: WallId[]; rest?: string }>()
+  finished.forEach((p, i) => {
+    const { wall, rest } = drafts[i]
+    const key = JSON.stringify({ ...p, name: rest ?? p.name, qty: 0 })
     const cur = merged.get(key)
-    if (cur) cur.qty += p.qty
-    else merged.set(key, { ...p })
+    if (cur) {
+      cur.part.qty += p.qty
+      if (wall) cur.walls.push(wall)
+    } else {
+      merged.set(key, { part: { ...p }, walls: wall ? [wall] : [], rest })
+    }
+  })
+  for (const { part, walls, rest } of merged.values()) {
+    if (rest === undefined) continue
+    const ws = [...new Set(walls)].sort((x, y) => WALLS.indexOf(x) - WALLS.indexOf(y))
+    part.name = `${ws.map(cap).join('/')} ${rest}`
   }
-  const parts = [...merged.values()].sort(
+  const parts = [...merged.values()].map((m) => m.part).sort(
     (x, y) =>
       STEP_ORDER.indexOf(x.step) - STEP_ORDER.indexOf(y.step) ||
       x.name.localeCompare(y.name, undefined, { numeric: true }) ||

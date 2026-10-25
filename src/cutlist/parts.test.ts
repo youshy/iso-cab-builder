@@ -26,7 +26,7 @@ describe('buildParts joints', () => {
   it('sides-past', () => {
     const d = base()
     const { parts: ps } = parts(d)
-    const sides = named(ps, /^Shell side/)
+    const sides = named(ps, /^Left\/Right shell/)
     expect(sides).toHaveLength(2) // one per layer
     for (const p of sides) {
       expect(p.qty).toBe(2)
@@ -34,9 +34,9 @@ describe('buildParts joints', () => {
       expect(p.step).toBe('shell')
     }
     expect(sides.map((p) => p.thickness).sort()).toEqual([18, 18])
-    const tb = named(ps, /^Shell top/)
+    const tb = named(ps, /^Top\/Bottom shell/)
     expect(tb.every((p) => p.qty === 2 && dims(p)[0] === 1400 && dims(p)[1] === 522)).toBe(true)
-    const back = named(ps, /^Shell back/)
+    const back = named(ps, /^Back shell/)
     expect(dims(back[0])).toEqual([1400, 1000])
     const t = sides.reduce((a, p) => a + p.thickness, 0)
     expect(t + tb[0].length + t).toBe(resolveDims(d).outer.x)
@@ -46,15 +46,15 @@ describe('buildParts joints', () => {
     const d = base()
     d.joint = 'tops-past'
     const { parts: ps } = parts(d)
-    expect(dims(named(ps, /^Shell top/)[0])).toEqual([1472, 522])
-    expect(dims(named(ps, /^Shell side/)[0])).toEqual([1000, 522])
-    expect(dims(named(ps, /^Shell back/)[0])).toEqual([1400, 1000])
+    expect(dims(named(ps, /^Top\/Bottom shell/)[0])).toEqual([1472, 522])
+    expect(dims(named(ps, /^Left\/Right shell/)[0])).toEqual([1000, 522])
+    expect(dims(named(ps, /^Back shell/)[0])).toEqual([1400, 1000])
   })
 
   it('mitre', () => {
     const d = base()
     d.joint = 'mitre'
-    const side = named(parts(d).parts, /^Shell side/)[0]
+    const side = named(parts(d).parts, /^Left\/Right shell/)[0]
     expect(dims(side)).toEqual([1072, 522])
     expect(side.bevels).toHaveLength(4)
     expect(side.bevels.every((b) => b.angle === 45)).toBe(true)
@@ -64,9 +64,9 @@ describe('buildParts joints', () => {
     const d = base()
     d.joint = 'rebate'
     const { parts: ps } = parts(d)
-    expect(dims(named(ps, /^Shell top/)[0])).toEqual([1436, 522])
-    expect(dims(named(ps, /^Shell back/)[0])).toEqual([1436, 1036])
-    expect(named(ps, /^Shell top/)[0].notes.join(' ')).toMatch(/rebate 18 × 36/)
+    expect(dims(named(ps, /^Top\/Bottom shell/)[0])).toEqual([1436, 522])
+    expect(dims(named(ps, /^Back shell/)[0])).toEqual([1436, 1036])
+    expect(named(ps, /^Top\/Bottom shell/)[0].notes.join(' ')).toMatch(/rebate 18 × 36/)
   })
 
   it('air gap with clips: liner box from inner + 2 x liner', () => {
@@ -77,19 +77,19 @@ describe('buildParts joints', () => {
       { kind: 'layer', materialId: 'mdf', thickness: 18 },
     ]
     const { parts: ps, hardware } = parts(d)
-    const ls = named(ps, /^Liner side/)
+    const ls = named(ps, /^Left\/Right liner/)
     expect(ls).toHaveLength(1)
     expect(ls[0].step).toBe('liner')
     expect(ls[0].materialId).toBe('mdf')
     expect(dims(ls[0])).toEqual([1036, 486])
-    expect(dims(named(ps, /^Liner top/)[0])).toEqual([1400, 486])
-    expect(dims(named(ps, /^Liner back/)[0])).toEqual([1400, 1000])
-    const ss = named(ps, /^Shell side/)[0]
+    expect(dims(named(ps, /^Top\/Bottom liner/)[0])).toEqual([1400, 486])
+    expect(dims(named(ps, /^Back liner/)[0])).toEqual([1400, 1000])
+    const ss = named(ps, /^Left\/Right shell/)[0]
     expect(ss.materialId).toBe('plywood')
     expect(dims(ss)).toEqual([1122, 572])
     const clips = hardware.find((h) => h.name === 'Isolation clip')!
     expect(clips.unit).toBe('pcs')
-    expect(clips.qty).toBeGreaterThanOrEqual(24)
+    expect(clips.qty).toBe(52) // grid points per liner wall: 2x6 sides, 2x8 top/bottom, 2x12 back/front
     expect(ps.some((p) => p.kind === 'strip')).toBe(false)
   })
 
@@ -117,15 +117,15 @@ describe('buildParts door wall', () => {
       { kind: 'layer', materialId: 'mdf', thickness: 18 },
     ]
     const { parts: ps } = parts(d)
-    expect(named(ps, /^Shell front/)[0].notes.join(' ')).toMatch(/cut opening \d+(\.\d)?×\d+(\.\d)? centred/)
-    expect(named(ps, /^Liner front/)[0].notes.join(' ')).toMatch(/cut opening/)
-    expect(named(ps, /^Shell back/)[0].notes.join(' ')).not.toMatch(/cut opening/)
+    expect(named(ps, /^Front shell/)[0].notes.join(' ')).toMatch(/cut opening \d+(\.\d)?×\d+(\.\d)? centred/)
+    expect(named(ps, /^Front liner/)[0].notes.join(' ')).toMatch(/cut opening/)
+    expect(named(ps, /^Back shell/)[0].notes.join(' ')).not.toMatch(/cut opening/)
   })
 
   it('wall door: points to the doors step', () => {
     const d = base()
     d.door.kind = 'wall'
-    const front = named(parts(d).parts, /^Shell front/)[0]
+    const front = named(parts(d).parts, /^Front shell/)[0]
     expect(front.notes).toContain('hinged wall: see doors step')
     expect(front.notes.join(' ')).not.toMatch(/cut opening/)
   })
@@ -206,6 +206,47 @@ describe('buildParts facets', () => {
   })
 })
 
+describe('buildParts review fixes', () => {
+  it('tilt 0 facet: no packer, bay fill, wedges or bevels', () => {
+    const d = base()
+    d.interior.left = interior([f(180, 0), f(180, 0)])
+    const ps = parts(d).parts.filter((p) => p.step === 'facets')
+    expect(ps.every((p) => p.thickness > 0)).toBe(true)
+    expect(ps.some((p) => p.kind === 'packer' || p.kind === 'wedge' || /bay fill/.test(p.name))).toBe(false)
+    expect(ps.every((p) => p.bevels.length === 0)).toBe(true)
+  })
+
+  it('bevels sit on the edges running along the span', () => {
+    const d = base()
+    d.interior.left = { ...interior([f(500, 5)]), splitAxis: 'y' }
+    const facet = named(parts(d).parts, /^Left facet/)[0]
+    expect(facet.length).toBeGreaterThan(450)
+    expect(facet.width).toBe(450)
+    expect(facet.bevels.map((b) => b.edge)).toEqual(['W1', 'W2'])
+  })
+
+  it('names list walls and material; overrides stay distinct', () => {
+    const d = base()
+    d.wallOverrides.top = [{ kind: 'layer', materialId: 'osb', thickness: 18 }]
+    const ps = parts(d).parts
+    expect(ps.some((p) => p.name === 'Left/Right shell, layer 1 (Plywood)')).toBe(true)
+    expect(ps.some((p) => p.name === 'Top shell, layer 1 (OSB)')).toBe(true)
+    expect(ps.some((p) => p.name === 'Bottom shell, layer 1 (Plywood)')).toBe(true)
+  })
+
+  it('strip material falls back to the first roll material', () => {
+    const d = base()
+    d.wallDefault = [
+      { kind: 'layer', materialId: 'plywood', thickness: 18 },
+      { kind: 'gap', width: 25, decoupling: 'strips', fill: 'empty', fillMaterialId: 'rockwool' },
+      { kind: 'layer', materialId: 'mdf', thickness: 18 },
+    ]
+    const l2 = { ...lib, materials: lib.materials.filter((m) => m.id !== 'rubber') }
+    const strip = buildParts(d, l2, shop).parts.find((p) => p.kind === 'strip')!
+    expect(strip.materialId).toBe('mlv')
+  })
+})
+
 describe('buildParts minimum size', () => {
   it('warns below minPart', () => {
     const d = base()
@@ -257,7 +298,7 @@ describe('buildParts inner panels and treatments', () => {
       { kind: 'layer', materialId: 'plywood', thickness: 18 },
       { kind: 'layer', materialId: 'mlv', thickness: 5 },
     ]
-    const mlv = named(parts(d).parts, /^Shell back/).find((p) => p.materialId === 'mlv')!
+    const mlv = named(parts(d).parts, /^Back shell/).find((p) => p.materialId === 'mlv')!
     expect(mlv.kind).toBe('roll')
     expect(mlv.notes.join(' ')).toMatch(/roll width 1220, 1 strip, overlap 50/)
   })
