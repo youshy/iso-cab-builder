@@ -2,11 +2,12 @@ import { useState } from 'preact/hooks'
 import { escape, OCTAVES, THIRD_OCTAVES, tlStack } from '../../acoustics/tl'
 import { stackThickness, WALLS, wallStack } from '../../geometry/walls'
 import type { Gap, JointType, Layer, StackItem, WallId } from '../../model/schema'
-import { hasGap, insertGap, moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
+import { addLayer, hasGap, insertGap, moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
 import { compareDesign, compareVersion, design, fmtLen, library, update } from '../../model/store'
 import { Chart, type ChartSeries } from '../Chart'
 import { libraryOpen } from '../library/MaterialLibrary'
 import { NumberField } from '../NumberField'
+import { useRowIds } from '../useRowIds'
 
 type Target = 'default' | WallId
 
@@ -107,24 +108,36 @@ function GapCells({ item, i, target }: { item: Gap; i: number; target: Target })
 }
 
 function StackEditor({ target, stack }: { target: Target; stack: StackItem[] }) {
+  const rows = useRowIds(stack.length)
+  const lib = library.value
+  const layerCount = stack.filter((i) => i.kind === 'layer').length
+  /** Apply a guarded stack edit; row ids follow only when the edit was accepted. */
+  const run = (next: StackItem[], track: () => void) => {
+    if (next === stack) return
+    track()
+    editStack(target, () => next)
+  }
   return (
     <div>
       {stack.map((item, i) => (
-        <div class={`srow ${item.kind === 'gap' ? 'gap' : ''}`} key={i}>
+        <div class={`srow ${item.kind === 'gap' ? 'gap' : ''}`} key={rows.ids[i]}>
           {item.kind === 'layer' ? <LayerCells item={item} i={i} target={target} /> : <GapCells item={item} i={i} target={target} />}
-          <button type="button" class="btn iconbtn" aria-label={`Move item ${i + 1} outward`} disabled={i === 0} onClick={() => editStack(target, (s) => moveLayer(s, i, -1))}>
+          <button type="button" class="btn iconbtn" aria-label={`Move item ${i + 1} outward`} disabled={moveLayer(stack, i, -1) === stack} onClick={() => run(moveLayer(stack, i, -1), () => rows.swapped(i, i - 1))}>
             Up
           </button>
-          <button type="button" class="btn iconbtn" aria-label={`Move item ${i + 1} inward`} disabled={i === stack.length - 1} onClick={() => editStack(target, (s) => moveLayer(s, i, 1))}>
+          <button type="button" class="btn iconbtn" aria-label={`Move item ${i + 1} inward`} disabled={moveLayer(stack, i, 1) === stack} onClick={() => run(moveLayer(stack, i, 1), () => rows.swapped(i, i + 1))}>
             Down
           </button>
-          <button type="button" class="btn iconbtn" aria-label={`Remove item ${i + 1}`} disabled={stack.length < 2} onClick={() => editStack(target, (s) => removeLayer(s, i))}>
+          <button type="button" class="btn iconbtn" aria-label={`Remove item ${i + 1}`} disabled={removeLayer(stack, i) === stack} onClick={() => run(removeLayer(stack, i), () => rows.removed(i))}>
             Remove
           </button>
         </div>
       ))}
       <div class="row">
-        <button type="button" class="btn" disabled={hasGap(stack)} onClick={() => editStack(target, (s) => insertGap(s))}>
+        <button type="button" class="btn" onClick={() => run(addLayer(stack, lib), () => rows.inserted(stack.length))}>
+          Add layer
+        </button>
+        <button type="button" class="btn" disabled={hasGap(stack) || layerCount < 1} onClick={() => run(insertGap(stack), () => rows.inserted(Math.min(1, stack.length)))}>
           Add air gap
         </button>
         <span class="hint num">Total {fmtLen(stackThickness(stack))}, outside first</span>

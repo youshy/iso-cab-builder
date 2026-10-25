@@ -8,9 +8,11 @@ import { DEFAULT_INSULATION, DEFAULT_PANEL_LAYER, materialOrFirst, newId } from 
 import {
   editFacetWidth, ensureInterior, MAX_FACETS, setFacetCount, setSplitAxis, splitWallEvenly, wallLength,
 } from '../../model/interiorEdit'
-import type { Axis, Design, Facet, InnerPanel, SurfaceRef, Treatment, WallId } from '../../model/schema'
+import type { Axis, Design, Facet, InnerPanel, Layer, SurfaceRef, Treatment, WallId } from '../../model/schema'
+import { addLayer, removeLayer } from '../../model/stack'
 import { compareDesign, design, fmtLen, library, update } from '../../model/store'
 import { NumberField } from '../NumberField'
+import { useRowIds } from '../useRowIds'
 import { SectionView } from '../views/SectionView'
 import { View3DPanel } from '../views/View3D'
 import { Seg } from '../Seg'
@@ -231,6 +233,7 @@ function PanelCard({ p, n }: { p: InnerPanel; n: number }) {
   const [u, v] = planeOf(p.normal)
   const fills = lib.materials.filter((m) => m.kind === 'fill')
   const layerMats = lib.materials.filter((m) => m.kind !== 'fill')
+  const rows = useRowIds(p.layers.length)
   return (
     <div class="card">
       <div class="cardhead">
@@ -263,17 +266,17 @@ function PanelCard({ p, n }: { p: InnerPanel; n: number }) {
         <NumberField label="to" value={p.v1} min={-1e9} allowZero onCommit={(val) => edit((q) => (q.v1 = val))} />
       </div>
       {p.layers.map((l, i) => (
-        <div class="row" key={i}>
+        <div class="row" key={rows.ids[i]}>
           <select aria-label={`Panel ${n} layer ${i + 1} material`} value={l.materialId} onChange={(e) => edit((q) => (q.layers[i].materialId = (e.target as HTMLSelectElement).value))}>
             {layerMats.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             {!layerMats.some((m) => m.id === l.materialId) && <option value={l.materialId}>Missing material</option>}
           </select>
           <NumberField ariaLabel={`Panel ${n} layer ${i + 1} thickness`} value={l.thickness} onCommit={(val) => edit((q) => (q.layers[i].thickness = val))} />
-          <button type="button" class="btn small" aria-label={`Remove panel ${n} layer ${i + 1}`} disabled={p.layers.length < 2} onClick={() => edit((q) => void q.layers.splice(i, 1))}>Remove</button>
+          <button type="button" class="btn small" aria-label={`Remove panel ${n} layer ${i + 1}`} disabled={removeLayer(p.layers, i) === p.layers} onClick={() => { rows.removed(i); edit((q) => void q.layers.splice(i, 1)) }}>Remove</button>
         </div>
       ))}
       <div class="row">
-        <button type="button" class="btn small" onClick={() => edit((q) => void q.layers.push(newLayer()))}>+ Add layer</button>
+        <button type="button" class="btn small" onClick={() => { rows.inserted(p.layers.length); edit((q) => void (q.layers = addLayer(q.layers, lib).filter((x): x is Layer => x.kind === 'layer'))) }}>Add layer</button>
         <label class="field">
           <input type="checkbox" checked={!!p.insulation} onChange={(e) => edit((q) => (q.insulation = (e.target as HTMLInputElement).checked ? newInsulation() : null))} />
           Insulation

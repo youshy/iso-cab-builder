@@ -1,11 +1,11 @@
 import { signal } from '@preact/signals'
 import { doorLayout, doorLeafLayers, type DoorLayout, type LeafLayout } from '../../doors/doors'
 import { inactiveFacetWarnings } from '../../geometry/space'
-import { DEFAULT_PANEL_LAYER, materialOrFirst } from '../../model/defaults'
 import type { Design, DoorLeaf, DoorSide, Layer, StackItem } from '../../model/schema'
-import { moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
+import { addLayer, moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
 import { design, fmtLen, library, update } from '../../model/store'
 import { NumberField } from '../NumberField'
+import { useRowIds } from '../useRowIds'
 import { Seg } from '../Seg'
 import { SectionView } from '../views/SectionView'
 import { View3DPanel } from '../views/View3D'
@@ -26,6 +26,13 @@ function LeafStack({ which, leaf }: { which: Which; leaf: DoorLeaf }) {
   const edit = (fn: (s: Layer[]) => Layer[]) =>
     update((d) => void (d.door[which].stack = fn(d.door[which].stack ?? [])))
   const name = TITLE[which].toLowerCase()
+  const rows = useRowIds(layers?.length ?? 0)
+  /** Apply a guarded edit; row ids follow only when the edit was accepted. */
+  const run = (next: StackItem[], track: () => void) => {
+    if (!layers || next === layers) return
+    track()
+    edit(() => asLayers(next))
+  }
   const mats = lib.materials.filter((m) => m.kind !== 'fill')
   return (
     <>
@@ -42,7 +49,7 @@ function LeafStack({ which, leaf }: { which: Which; leaf: DoorLeaf }) {
       {layers && (
         <div>
           {layers.map((l, i) => (
-            <div class="srow" key={i}>
+            <div class="srow" key={rows.ids[i]}>
               <div class="main-cell">
                 <select
                   aria-label={`${TITLE[which]} layer ${i + 1} material`}
@@ -54,13 +61,13 @@ function LeafStack({ which, leaf }: { which: Which; leaf: DoorLeaf }) {
                 </select>
                 <NumberField ariaLabel={`${TITLE[which]} layer ${i + 1} thickness`} value={l.thickness} onCommit={(v) => edit((s) => s.map((x, k) => (k === i ? { ...x, thickness: v } : x)))} />
               </div>
-              <button type="button" class="btn iconbtn" aria-label={`Move ${name} layer ${i + 1} outward`} disabled={i === 0} onClick={() => edit((s) => asLayers(moveLayer(s, i, -1)))}>Up</button>
-              <button type="button" class="btn iconbtn" aria-label={`Move ${name} layer ${i + 1} inward`} disabled={i === layers.length - 1} onClick={() => edit((s) => asLayers(moveLayer(s, i, 1)))}>Down</button>
-              <button type="button" class="btn iconbtn" aria-label={`Remove ${name} layer ${i + 1}`} disabled={layers.length < 2} onClick={() => edit((s) => asLayers(removeLayer(s, i)))}>Remove</button>
+              <button type="button" class="btn iconbtn" aria-label={`Move ${name} layer ${i + 1} outward`} disabled={moveLayer(layers, i, -1) === layers} onClick={() => run(moveLayer(layers, i, -1), () => rows.swapped(i, i - 1))}>Up</button>
+              <button type="button" class="btn iconbtn" aria-label={`Move ${name} layer ${i + 1} inward`} disabled={moveLayer(layers, i, 1) === layers} onClick={() => run(moveLayer(layers, i, 1), () => rows.swapped(i, i + 1))}>Down</button>
+              <button type="button" class="btn iconbtn" aria-label={`Remove ${name} layer ${i + 1}`} disabled={removeLayer(layers, i) === layers} onClick={() => run(removeLayer(layers, i), () => rows.removed(i))}>Remove</button>
             </div>
           ))}
           <div class="row">
-            <button type="button" class="btn small" onClick={() => edit((s) => [...s, { kind: 'layer', materialId: materialOrFirst(lib, DEFAULT_PANEL_LAYER.materialId, ['sheet']), thickness: DEFAULT_PANEL_LAYER.thickness }])}>+ Add layer</button>
+            <button type="button" class="btn small" onClick={() => run(addLayer(layers, lib), () => rows.inserted(layers.length))}>Add layer</button>
             <span class="hint num">Total {fmtLen(layers.reduce((a, l) => a + l.thickness, 0))}, outside first</span>
           </div>
         </div>

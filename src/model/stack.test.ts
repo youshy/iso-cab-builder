@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDesign, defaultLibrary } from './defaults'
-import { insertGap, materialUsage, moveLayer, removeLayer, setLayerMaterial } from './stack'
+import { addLayer, DEFAULT_GAP, insertGap, materialUsage, moveLayer, removeLayer, setLayerMaterial } from './stack'
 import type { StackItem } from './schema'
 
 const L = (materialId: string, thickness: number): StackItem => ({ kind: 'layer', materialId, thickness })
@@ -34,5 +34,65 @@ describe('stack helpers', () => {
     d.wallOverrides.left = [L('osb', 12)]
     expect(materialUsage(d, 'osb')).toEqual(['left wall override'])
     expect(materialUsage(d, 'carpet')).toEqual([])
+  })
+  describe('variable layer count', () => {
+    const lib = defaultLibrary()
+    const kinds = (s: StackItem[]) => s.map((i) => i.kind)
+    it('addLayer appends a copy of the innermost layer', () => {
+      const s = addLayer([L('plywood', 18), L('mdf', 18)], lib)
+      expect(s).toHaveLength(3)
+      expect(s[2]).toEqual(L('mdf', 18))
+    })
+    it('addLayer at index 0 inserts a copy of the innermost layer first', () => {
+      const s = addLayer([L('plywood', 18), L('mdf', 12)], lib, 0)
+      expect(s.map((i) => (i as any).materialId)).toEqual(['mdf', 'plywood', 'mdf'])
+      expect(s[0]).toEqual(L('mdf', 12))
+    })
+    it('addLayer copies the innermost layer even when a gap sits between', () => {
+      const s = addLayer([L('plywood', 18), { ...DEFAULT_GAP }, L('mdf', 12)], lib, 1)
+      expect(kinds(s)).toEqual(['layer', 'layer', 'gap', 'layer'])
+      expect(s[1]).toEqual(L('mdf', 12))
+    })
+    it('addLayer on an empty stack uses the first sheet material', () => {
+      const s = addLayer([], lib)
+      const m = lib.materials.find((x) => x.kind === 'sheet')!
+      expect(s).toEqual([L(m.id, m.thicknesses[0])])
+    })
+    it('addLayer does not mutate and returns independent objects', () => {
+      const a = [L('plywood', 18)]
+      const b = addLayer(a, lib)
+      expect(a).toHaveLength(1)
+      expect(b[1]).not.toBe(a[0])
+    })
+    it('moveLayer refuses to make the gap first or last', () => {
+      const s = [L('a', 1), { ...DEFAULT_GAP }, L('b', 2)]
+      expect(moveLayer(s, 1, -1)).toBe(s)
+      expect(moveLayer(s, 1, 1)).toBe(s)
+      expect(moveLayer(s, 0, 1)).toBe(s)
+      expect(moveLayer(s, 2, -1)).toBe(s)
+    })
+    it('moveLayer still swaps layers around a gap', () => {
+      const s = [L('a', 1), L('b', 2), { ...DEFAULT_GAP }, L('c', 3)]
+      expect(moveLayer(s, 0, 1).map((i) => (i as any).materialId)).toEqual(['b', 'a', undefined, 'c'])
+    })
+    it('removeLayer refuses to leave the gap outermost or innermost', () => {
+      const s = [L('a', 1), { ...DEFAULT_GAP }, L('b', 2)]
+      expect(removeLayer(s, 0)).toBe(s)
+      expect(removeLayer(s, 2)).toBe(s)
+    })
+    it('removeLayer allows down to one layer, never zero', () => {
+      const s = [L('a', 1), L('b', 2), L('c', 3)]
+      const two = removeLayer(s, 1)
+      expect(two).toHaveLength(2)
+      const one = removeLayer(two, 0)
+      expect(one).toHaveLength(1)
+      expect(removeLayer(one, 0)).toBe(one)
+      const g = [L('a', 1), { ...DEFAULT_GAP }, L('b', 2), L('c', 3)]
+      expect(removeLayer(g, 3)).toHaveLength(3)
+    })
+    it('removeLayer can remove the gap itself', () => {
+      const s = [L('a', 1), { ...DEFAULT_GAP }, L('b', 2)]
+      expect(kinds(removeLayer(s, 1))).toEqual(['layer', 'layer'])
+    })
   })
 })
