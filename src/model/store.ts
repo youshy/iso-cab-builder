@@ -5,6 +5,7 @@ import type { Design, Library, Project, Shop } from './schema'
 import { defaultDesign, defaultLibrary, defaultShop, newId } from './defaults'
 import { createStore } from '../storage/local'
 import { resolveDims } from '../geometry/dimensions'
+import { rescaleInteriors } from './interiorEdit'
 
 export type Units = 'mm' | 'in'
 type Backend = Parameters<typeof createStore>[0]
@@ -115,6 +116,7 @@ export function createAppStore(backend: Backend) {
   function update(fn: (d: Design) => void): void {
     const next = structuredClone(design.value)
     fn(next)
+    rescaleInteriors(design.value, next)
     const parsed = DesignSchema.safeParse(next)
     if (!parsed.success) {
       rejectEdit(parsed.error)

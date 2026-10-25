@@ -6,16 +6,25 @@ import { doorWall } from '../../doors/side'
 import type { Axis, Design, Vec3, WallId } from '../../model/schema'
 
 type View = 'plan' | 'front' | 'side'
-type Props = { design: Design; view: View; highlight?: WallId; compare?: Design | null; exaggerate?: boolean }
+type Props = {
+  design: Design
+  view: View
+  highlight?: WallId
+  compare?: Design | null
+  /** Stretch depth by 2.4 in the plan view so shallow facets are visible. */
+  exaggerate?: boolean
+  /** Called with the wall under a click; walls then show a pointer cursor. */
+  onSelectWall?: (w: WallId) => void
+}
 
 /** Horizontal and vertical world axes shown by each view; the third axis is cut at its middle. */
 const AXES: Record<View, [Axis, Axis]> = { plan: ['x', 'z'], front: ['x', 'y'], side: ['z', 'y'] }
 const MIN_WALLS: WallId[] = ['left', 'bottom', 'back']
-const DEPTH_EXAGGERATION = 2.4
+export const DEPTH_EXAGGERATION = 2.4
 
 type R = { x: number; y: number; width: number; height: number }
 
-export function SectionView({ design: d, view, highlight, compare, exaggerate }: Props) {
+export function SectionView({ design: d, view, highlight, compare, exaggerate, onSelectWall }: Props) {
   const [ha, va] = AXES[view]
   const cut = (['x', 'y', 'z'] as Axis[]).find((a) => a !== ha && a !== va)!
   const k = (a: Axis) => (exaggerate && view === 'plan' && a === 'z' ? DEPTH_EXAGGERATION : 1)
@@ -44,6 +53,8 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate }:
   const pad = Math.max(maxX - minX, maxY - minY) * 0.06
   const viewBox = `${minX - pad} ${minY - pad} ${maxX - minX + 2 * pad} ${maxY - minY + 2 * pad}`
 
+  const pick = (w: WallId) =>
+    onSelectWall ? { onClick: () => onSelectWall(w), style: { cursor: 'pointer' } } : {}
   const hatchId = `hatch-${view}`
   const shellEls: preact.JSX.Element[] = []
   const facetEls: preact.JSX.Element[] = []
@@ -67,7 +78,7 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate }:
       const r = n === ha ? rect(n0, n0 + th, a0, a1) : rect(a0, a1, n0, n0 + th)
       const isGap = item.kind === 'gap'
       shellEls.push(
-        <rect key={`${w}${i}`} {...r} class={isGap ? 'sv-gap' : 'sv-layer'} fill={isGap ? `url(#${hatchId})` : undefined}>
+        <rect key={`${w}${i}`} {...r} {...pick(w)} class={`${isGap ? 'sv-gap' : 'sv-layer'}${highlight === w ? ' sel' : ''}`} fill={isGap ? `url(#${hatchId})` : undefined}>
           <title>{isGap ? `${w} wall air gap` : `${w} wall layer`}</title>
         </rect>,
       )
@@ -94,8 +105,25 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate }:
     })
     const base = [samples[samples.length - 1], samples[0]].map((s) => (n === ha ? pt(isMin ? 0 : inner[n], s) : pt(s, isMin ? 0 : inner[n])))
     const pts = [...face, ...base].map((p) => p.join(',')).join(' ')
-    facetEls.push(
-      <polygon key={`f${w}`} points={pts} class={highlight === w ? 'sv-facet hi' : 'sv-facet'}>
+    if (highlight === w && wi.splitAxis === along) {
+      let c = 0
+      wi.facets.forEach((f, i) => {
+        const mid = c + f.width / 2
+        c += f.width
+        const o = offsetAt(mid)
+        const [px, py] = n === ha ? pt(isMin ? o : inner[n] - o, mid) : pt(mid, isMin ? o : inner[n] - o)
+        const dir = isMin ? 1 : -1
+        facetEls.push(
+          <text key={`t${w}${i}`} class="sv-flabel" font-size={pad * 0.6}
+            x={n === ha ? px + dir * pad * 0.3 : px} y={n === ha ? py + pad * 0.2 : py + dir * (upIsNegative ? -1 : 1) * pad * 0.8}
+            text-anchor={n === ha ? (isMin ? 'start' : 'end') : 'middle'}>
+            {`${i + 1}: ${f.tilt}°`}
+          </text>,
+        )
+      })
+    }
+    facetEls.unshift(
+      <polygon key={`f${w}`} points={pts} {...pick(w)} class={highlight === w ? 'sv-facet hi' : 'sv-facet'}>
         <title>{`${w} wall interior`}</title>
       </polygon>,
     )

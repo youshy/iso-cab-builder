@@ -3,6 +3,7 @@ import { STEPS, StepTabs, type StepId } from './StepTabs';
 import { TopBar } from './TopBar';
 import { CabStep } from './steps/CabStep';
 import { WallsStep } from './steps/WallsStep';
+import { InteriorStep } from './steps/InteriorStep';
 import { MaterialLibrary, libraryOpen } from './library/MaterialLibrary';
 import { editError } from '../model/store';
 
@@ -22,6 +23,8 @@ export function App() {
           <CabStep />
         ) : step === 'walls' ? (
           <WallsStep />
+        ) : step === 'interior' ? (
+          <InteriorStep />
         ) : (
           <>
             <aside>

@@ -146,3 +146,29 @@ td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
 .libpanel input.text{border:1px solid var(--line-strong);border-radius:4px;padding:3px 6px;background:var(--bg)}
 .libhead{display:flex;align-items:center;gap:12px}
 .libhead h3{margin:0;flex:1}
+
+/* interior step */
+.net{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,34px);gap:3px;width:100%}
+.face{border:1px solid var(--line-strong);background:var(--bg);border-radius:4px;display:grid;place-items:center;font-size:12px;cursor:pointer;position:relative;padding:0}
+.face:hover{border-color:var(--ink-2)}
+.face.sel{background:var(--accent-soft);border-color:var(--accent);font-weight:600}
+.face .badge{position:absolute;top:2px;right:4px;font-size:10px;color:var(--ink-3)}
+.face.door{border-style:dashed;color:var(--ink-3);cursor:not-allowed}
+.stepper{display:inline-flex;align-items:center;border:1px solid var(--line-strong);border-radius:6px;background:var(--bg)}
+.stepper button{border:0;background:none;width:28px;height:28px;cursor:pointer}
+.stepper button:disabled{opacity:.4;cursor:default}
+.stepper span{min-width:24px;text-align:center}
+.btn.small{font-size:12px;padding:3px 8px}
+tr.facet:hover td{background:var(--bg)}
+td input[type=range]{width:100%;accent-color:var(--accent);margin:0}
+td select{padding:2px 4px}
+details{border-top:1px solid var(--line);padding:10px 0;margin-top:10px}
+summary{cursor:pointer;font-weight:600}
+summary .unit{font-weight:400;margin-left:6px}
+.cardhead .grow{flex:1}
+.interiorstage{grid-template-rows:auto 1fr}
+.viewbar{display:flex;gap:12px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line)}
+.viewbar .sp{flex:1}
+.section .sv-layer.sel{stroke:var(--accent);stroke-width:1.5}
+.section .sv-flabel{fill:var(--accent)}
+.readout{margin-top:12px}

@@ -196,3 +196,19 @@ describe('speaker presets', () => {
     expect(matchPreset(cab)).toBeNull()
   })
 })
+
+describe('store interior rescale', () => {
+  it('rescales facets when the inner box is resized through update', () => {
+    const s = createAppStore(memoryBackend())
+    s.update((d) => {
+      d.dims.innerSource = 'manual'
+      d.dims.inner = { x: 1000, y: 800, z: 360 }
+      d.interior.left = {
+        splitAxis: 'z', panelMaterialId: 'plywood', panelThickness: 12, closure: 'fillers', behind: 'insulation',
+        facets: [{ width: 120, tilt: 4, hinge: 'min' }, { width: 240, tilt: 7, hinge: 'max' }],
+      }
+    })
+    s.update((d) => void (d.dims.inner.z = 240))
+    expect(s.design.value.interior.left!.facets.map((f) => f.width)).toEqual([80, 160])
+  })
+})
