@@ -1,0 +1,170 @@
+import { resolveDims } from '../../geometry/dimensions'
+import { facetOffsetAt } from '../../geometry/facets'
+import { cabBox } from '../../geometry/space'
+import { activeInterior, stackThickness, wallNormal, wallStack, WALLS } from '../../geometry/walls'
+import { doorWall } from '../../doors/side'
+import type { Axis, Design, Vec3, WallId } from '../../model/schema'
+
+type View = 'plan' | 'front' | 'side'
+type Props = { design: Design; view: View; highlight?: WallId; compare?: Design | null; exaggerate?: boolean }
+
+/** Horizontal and vertical world axes shown by each view; the third axis is cut at its middle. */
+const AXES: Record<View, [Axis, Axis]> = { plan: ['x', 'z'], front: ['x', 'y'], side: ['z', 'y'] }
+const MIN_WALLS: WallId[] = ['left', 'bottom', 'back']
+const DEPTH_EXAGGERATION = 2.4
+
+type R = { x: number; y: number; width: number; height: number }
+
+export function SectionView({ design: d, view, highlight, compare, exaggerate }: Props) {
+  const [ha, va] = AXES[view]
+  const cut = (['x', 'y', 'z'] as Axis[]).find((a) => a !== ha && a !== va)!
+  const k = (a: Axis) => (exaggerate && view === 'plan' && a === 'z' ? DEPTH_EXAGGERATION : 1)
+  const upIsNegative = view !== 'plan' // plan: depth grows downwards, back at the top
+
+  /** World ranges on the view axes to a screen rect. */
+  const rect = (h0: number, h1: number, v0: number, v1: number): R => {
+    const x0 = h0 * k(ha), x1 = h1 * k(ha)
+    const y0 = (upIsNegative ? -v1 : v0) * k(va), y1 = (upIsNegative ? -v0 : v1) * k(va)
+    return { x: Math.min(x0, x1), y: Math.min(y0, y1), width: Math.abs(x1 - x0), height: Math.abs(y1 - y0) }
+  }
+  const pt = (h: number, v: number): [number, number] => [h * k(ha), (upIsNegative ? -v : v) * k(va)]
+
+  const { inner } = resolveDims(d)
+  const thick = (dd: Design, w: WallId) => stackThickness(wallStack(dd, w))
+  const lo = (dd: Design, a: Axis) => thick(dd, a === 'x' ? 'left' : a === 'y' ? 'bottom' : 'back')
+  const hi = (dd: Design, a: Axis) => thick(dd, a === 'x' ? 'right' : a === 'y' ? 'top' : 'front')
+  const outerRect = (dd: Design, innerSize: Vec3) =>
+    rect(-lo(dd, ha), innerSize[ha] + hi(dd, ha), -lo(dd, va), innerSize[va] + hi(dd, va))
+
+  const outer = outerRect(d, inner)
+  const cmp = compare ? outerRect(compare, resolveDims(compare).inner) : null
+  const bounds = [outer, ...(cmp ? [cmp] : [])]
+  const minX = Math.min(...bounds.map((b) => b.x)), minY = Math.min(...bounds.map((b) => b.y))
+  const maxX = Math.max(...bounds.map((b) => b.x + b.width)), maxY = Math.max(...bounds.map((b) => b.y + b.height))
+  const pad = Math.max(maxX - minX, maxY - minY) * 0.06
+  const viewBox = `${minX - pad} ${minY - pad} ${maxX - minX + 2 * pad} ${maxY - minY + 2 * pad}`
+
+  const hatchId = `hatch-${view}`
+  const shellEls: preact.JSX.Element[] = []
+  const facetEls: preact.JSX.Element[] = []
+
+  // Shell: every wall whose normal is on a view axis, drawn as bands outside-in.
+  for (const w of WALLS) {
+    const n = wallNormal(w)
+    if (n !== ha && n !== va) continue
+    const isMin = MIN_WALLS.includes(w)
+    const t = thick(d, w)
+    const along = n === ha ? va : ha // the other view axis
+    // Walls normal to the horizontal axis run the full outer height; the others span the inner width.
+    const a0 = n === ha ? -lo(d, along) : 0
+    const a1 = n === ha ? inner[along] + hi(d, along) : inner[along]
+    let cum = 0
+    const stack = wallStack(d, w)
+    stack.forEach((item, i) => {
+      const th = item.kind === 'layer' ? item.thickness : item.width
+      const n0 = isMin ? -t + cum : inner[n] + t - cum - th
+      cum += th
+      const r = n === ha ? rect(n0, n0 + th, a0, a1) : rect(a0, a1, n0, n0 + th)
+      const isGap = item.kind === 'gap'
+      shellEls.push(
+        <rect key={`${w}${i}`} {...r} class={isGap ? 'sv-gap' : 'sv-layer'} fill={isGap ? `url(#${hatchId})` : undefined}>
+          <title>{isGap ? `${w} wall air gap` : `${w} wall layer`}</title>
+        </rect>,
+      )
+    })
+
+    // Facets for this wall.
+    const wi = activeInterior(d, w)
+    if (!wi) continue
+    const offsetAt = (alongPos: number) =>
+      facetOffsetAt(wi, wi.splitAxis === along ? alongPos : inner[wi.splitAxis] / 2)
+    const samples: number[] = [0]
+    if (wi.splitAxis === along) {
+      let c = 0
+      for (const f of wi.facets.slice(0, -1)) {
+        c += f.width
+        samples.push(c - 1e-6, c + 1e-6)
+      }
+    }
+    samples.push(inner[along])
+    const face = samples.map((s) => {
+      const o = offsetAt(s)
+      const nPos = isMin ? o : inner[n] - o
+      return n === ha ? pt(nPos, s) : pt(s, nPos)
+    })
+    const base = [samples[samples.length - 1], samples[0]].map((s) => (n === ha ? pt(isMin ? 0 : inner[n], s) : pt(s, isMin ? 0 : inner[n])))
+    const pts = [...face, ...base].map((p) => p.join(',')).join(' ')
+    facetEls.push(
+      <polygon key={`f${w}`} points={pts} class={highlight === w ? 'sv-facet hi' : 'sv-facet'}>
+        <title>{`${w} wall interior`}</title>
+      </polygon>,
+    )
+  }
+
+  // Inner panels: box on world axes, shown when the cut passes through it.
+  const panelEls: preact.JSX.Element[] = []
+  for (const p of d.panels) {
+    const t = p.layers.reduce((a, l) => a + l.thickness, 0) + (p.insulation?.thickness ?? 0)
+    const [u, v] = (['x', 'y', 'z'] as Axis[]).filter((a) => a !== p.normal)
+    const range: Record<Axis, [number, number]> = { x: [0, 0], y: [0, 0], z: [0, 0] }
+    range[p.normal] = [p.position, p.position + t]
+    range[u] = [p.u0, p.u1]
+    range[v] = [p.v0, p.v1]
+    const mid = inner[cut] / 2
+    if (mid < range[cut][0] || mid > range[cut][1]) continue
+    panelEls.push(<rect key={p.id} {...rect(...range[ha], ...range[va])} class="sv-panel"><title>Inner panel</title></rect>)
+  }
+
+  // Cab (sizing cab), dashed.
+  const sizing = d.cabs.find((c) => c.id === d.dims.sizingCabId) ?? d.cabs[0]
+  const cb = cabBox(d, sizing)
+  const cabRect = rect(cb.min[ha], cb.max[ha], cb.min[va], cb.max[va])
+
+  // Door marker.
+  const dw = doorWall(d)
+  const dn = wallNormal(dw)
+  let door: preact.JSX.Element
+  if (dn === ha || dn === va) {
+    const isMin = MIN_WALLS.includes(dw)
+    const along = dn === ha ? va : ha
+    const t = thick(d, dw)
+    const edge = isMin ? -t : inner[dn] + t
+    const a1 = inner[along]
+    const [x1, y1] = dn === ha ? pt(edge, 0) : pt(0, edge)
+    const [x2, y2] = dn === ha ? pt(edge, a1) : pt(a1, edge)
+    door = (
+      <g class="sv-door">
+        <line x1={x1} y1={y1} x2={x2} y2={y2} />
+        <text font-size={pad * 0.7} x={(x1 + x2) / 2 + (dn === ha ? (isMin ? -pad * 0.4 : pad * 0.4) : 0)} y={(y1 + y2) / 2 + (dn === ha ? 0 : -pad * 0.3)} text-anchor={dn === ha ? (isMin ? 'end' : 'start') : 'middle'}>Door</text>
+      </g>
+    )
+  } else {
+    const m = d.door.margin
+    const r = rect(m, inner[ha] - m, m, inner[va] - m)
+    door = (
+      <g class="sv-door">
+        <rect {...r} fill="none" />
+        <text font-size={pad * 0.7} x={r.x + r.width / 2} y={r.y + r.height / 2} text-anchor="middle">Door ({dw} wall)</text>
+      </g>
+    )
+  }
+
+  return (
+    <svg viewBox={viewBox} class="section" role="img" aria-label={`${view} section`} preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <pattern id={hatchId} width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="12" height="12" class="sv-gap-bg" />
+          <line x1="0" y1="0" x2="0" y2="12" class="sv-hatch" />
+        </pattern>
+      </defs>
+      <rect {...outer} class="sv-outer" />
+      <rect {...rect(0, inner[ha], 0, inner[va])} class="sv-inner" />
+      {shellEls}
+      {facetEls}
+      {panelEls}
+      <rect {...cabRect} class="sv-cab" />
+      {cmp && <rect {...cmp} class="sv-compare" />}
+      {door}
+    </svg>
+  )
+}

@@ -53,5 +53,54 @@ h3:first-child{margin-top:0}
 .legend{display:flex;gap:14px;font-size:12px;color:var(--ink-2);align-items:center}
 
 .main{display:grid;grid-template-columns:380px 1fr;min-height:0}
-.stage{display:grid;min-height:0}
+.stage{display:grid;grid-template-rows:1fr;min-height:0}
 .step{background:none;border:0;border-bottom:2px solid transparent}
+
+/* controls */
+.seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:6px;overflow:hidden}
+.seg button{border:0;background:var(--bg);padding:4px 10px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line-strong)}
+.seg button.on{background:var(--ink);color:var(--bg)}
+.row{display:flex;align-items:center;gap:10px;margin:8px 0;flex-wrap:wrap}
+.row>label,.row>.rl{width:92px;color:var(--ink-2)}
+.unit{color:var(--ink-3);font-size:12px}
+.numfield{border:1px solid var(--line-strong);border-radius:4px;padding:3px 4px;background:var(--bg);text-align:right}
+.field{display:inline-flex;align-items:center;gap:6px}
+.fl{color:var(--ink-2)}
+table{width:100%;border-collapse:collapse;margin-top:6px}
+th{font-size:11px;font-weight:600;color:var(--ink-3);text-align:left;padding:4px 4px;border-bottom:1px solid var(--line)}
+td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
+.err,.warn{color:var(--warn)}
+.err{font-size:12px}
+.card{border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:10px;margin:8px 0}
+.card.sel{border-color:var(--accent);background:var(--accent-soft)}
+.badge-fit{font-size:11px;padding:1px 6px;border-radius:10px;border:1px solid var(--line-strong);color:var(--ink-2)}
+.badge-fit.ok{color:var(--ok);border-color:var(--ok)}
+.badge-fit.no{color:var(--warn);border-color:var(--warn)}
+.cardhead{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.cardhead input.name{flex:1;border:1px solid var(--line-strong);border-radius:4px;padding:3px 6px;background:var(--bg)}
+/* views */
+.views{display:grid;grid-template-columns:1.3fr 1fr;gap:1px;background:var(--line);min-height:0}
+.view{background:var(--bg);position:relative;display:flex;flex-direction:column;min-height:0;min-width:0}
+.view .lbl{position:absolute;top:8px;left:12px;font-size:12px;color:var(--ink-2)}
+.view svg{flex:1;width:100%;height:100%;min-height:0;padding:28px 12px 12px}
+.section .sv-outer{fill:var(--line);stroke:var(--ink);stroke-width:1;vector-effect:non-scaling-stroke}
+.section .sv-inner{fill:var(--bg);stroke:var(--ink);stroke-width:1;vector-effect:non-scaling-stroke}
+.section .sv-layer{fill:var(--line-strong);stroke:var(--ink-2);stroke-width:1;vector-effect:non-scaling-stroke}
+.section .sv-gap{stroke:var(--ink-3);stroke-width:1;vector-effect:non-scaling-stroke}
+.section .sv-gap-bg{fill:var(--bg)}
+.section .sv-hatch{stroke:var(--ink-3);stroke-width:2}
+.section .sv-facet{fill:var(--panel);stroke:var(--ink-2);stroke-width:1;vector-effect:non-scaling-stroke}
+.section .sv-facet.hi{fill:var(--accent-soft);stroke:var(--accent)}
+.section .sv-panel{fill:var(--line-strong);stroke:var(--ink-2);vector-effect:non-scaling-stroke}
+.section .sv-cab{fill:none;stroke:var(--ink);stroke-width:1.5;stroke-dasharray:6 4;vector-effect:non-scaling-stroke}
+.section .sv-compare{fill:none;stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:6 4;vector-effect:non-scaling-stroke}
+.section .sv-door line,.section .sv-door rect{stroke:var(--ink);stroke-width:4;stroke-dasharray:2 3;vector-effect:non-scaling-stroke}
+.section .sv-door rect{stroke-width:1.5;stroke-dasharray:3 3}
+.section .sv-door text{fill:var(--ink-2)}
+
+.top{white-space:nowrap}
+.top .ctl,.top .btn{flex:none}
+.field{white-space:nowrap}
+.row .field{flex:none}
+.row>label.field{width:auto}
