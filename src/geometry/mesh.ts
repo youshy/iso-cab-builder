@@ -1,4 +1,5 @@
-import { doorLayout, SPLIT_GAP, type LeafLayout } from '../doors/doors'
+import { doorLayout, type LeafLayout } from '../doors/doors'
+import { SPLIT_GAP } from '../model/defaults'
 import type { Axis, Design, Library, WallId } from '../model/schema'
 import { around, boxBounds, boxPart, facetSpan, panelPieces, wallBoxes, wallSpan, type Range, type Rect } from './boxes'
 import { resolveDims } from './dimensions'
@@ -226,7 +227,7 @@ type DoorFrame = {
   inner: Record<Axis, number>
 }
 
-/** Leaf slabs (outer face-mounted outside the wall, inner inset at the inner face) and frame strips. */
+/** Leaf slabs (outer face-mounted outside the wall, inner in its pocket at the inner face) and frame strips. */
 function addDoors(solids: Solid[], d: Design, door: ReturnType<typeof doorLayout>, f: DoorFrame) {
   const side = door.side
   const n = wallNormal(side)
@@ -252,7 +253,7 @@ function addDoors(solids: Solid[], d: Design, door: ReturnType<typeof doorLayout
     }
     if (leaf.frame) {
       const [fFrom, fTo] = leaf.which === 'outer' ? [total - leaf.frame.depth, total] : [0, leaf.frame.depth]
-      around(f.centred(leaf.cutout), f.centred(leaf.opening)).forEach((r, i) =>
+      around(f.centred(leaf.cutout), f.centred(leaf.pocket ?? leaf.opening)).forEach((r, i) =>
         put(`door-${leaf.which}-frame-${i + 1}`, r, fFrom, fTo))
     }
   }

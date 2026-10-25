@@ -32,6 +32,58 @@ const bounds = (d: Design) => {
   return { lo: -t, hi: { x: inner.x + t, y: inner.y + t, z: inner.z + t } }
 }
 
+type Solid = ReturnType<typeof buildScene>['solids'][number]
+const axisRange = (s: { vertices: number[] }, axis: 0 | 1 | 2): [number, number] => {
+  const v = s.vertices.filter((_, i) => i % 3 === axis)
+  return [Math.min(...v), Math.max(...v)]
+}
+type P3 = [number, number, number]
+const pts = (s: { vertices: number[] }): P3[] =>
+  Array.from({ length: s.vertices.length / 3 }, (_, i) => [s.vertices[3 * i], s.vertices[3 * i + 1], s.vertices[3 * i + 2]] as P3)
+const sub = (a: P3, b: P3): P3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+const cross = (a: P3, b: P3): P3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+const dot = (a: P3, b: P3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+/** Volume of a closed solid: sum of signed tetrahedra against the origin. */
+const volume = (s: { vertices: number[]; indices: number[] }) => {
+  const v = pts(s)
+  let sum = 0
+  for (let i = 0; i < s.indices.length; i += 3) {
+    const [a, b, c] = [v[s.indices[i]], v[s.indices[i + 1]], v[s.indices[i + 2]]]
+    sum += dot(a, cross(b, c)) / 6
+  }
+  return Math.abs(sum)
+}
+/** Strict inside test for a convex solid: on the inner side of every face triangle. */
+const inside = (s: { vertices: number[]; indices: number[] }) => {
+  const v = pts(s)
+  const c = v.reduce((a, p) => [a[0] + p[0] / v.length, a[1] + p[1] / v.length, a[2] + p[2] / v.length] as P3, [0, 0, 0] as P3)
+  const planes: [P3, P3][] = []
+  for (let i = 0; i < s.indices.length; i += 3) {
+    const [a, b, cc] = [v[s.indices[i]], v[s.indices[i + 1]], v[s.indices[i + 2]]]
+    let n = cross(sub(b, a), sub(cc, a))
+    if (Math.hypot(...n) < 1e-9) continue
+    if (dot(n, sub(c, a)) > 0) n = [-n[0], -n[1], -n[2]]
+    planes.push([n, a])
+  }
+  return (p: P3) => planes.every(([n, a]) => dot(n, sub(p, a)) < -1e-6 * Math.hypot(...n))
+}
+const aabb = (s: { vertices: number[] }) => [0, 1, 2].map((i) => axisRange(s, i as 0 | 1 | 2))
+const isBox = (s: { vertices: number[] }) => [0, 1, 2].every((i) => new Set(s.vertices.filter((_, k) => k % 3 === i)).size <= 2)
+/** Intersection volume: exact for two axis-aligned boxes, sampled on a 1.5 mm grid otherwise. */
+const overlap = (s: Solid, t: Solid) => {
+  const [A, B] = [aabb(s), aabb(t)]
+  const I = A.map(([a0, a1], i) => [Math.max(a0, B[i][0]), Math.min(a1, B[i][1])])
+  if (I.some(([a, b]) => b - a <= 1e-6)) return 0
+  if (isBox(s) && isBox(t)) return I.reduce((v, [a, b]) => v * (b - a), 1)
+  const [inS, inT] = [inside(s), inside(t)]
+  const h = 1.5
+  let n = 0
+  for (let x = I[0][0] + 0.3137; x < I[0][1]; x += h)
+    for (let y = I[1][0] + 0.2719; y < I[1][1]; y += h)
+      for (let z = I[2][0] + 0.4441; z < I[2][1]; z += h) if (inS([x, y, z]) && inT([x, y, z])) n++
+  return n * h ** 3
+}
+
 describe('buildScene', () => {
   it('default design: layers for every wall and one cab', () => {
     const s = buildScene(base())
@@ -218,53 +270,6 @@ describe('buildScene', () => {
     })
 
     describe('boxes are closed and no two wall layers overlap', () => {
-      type P3 = [number, number, number]
-      const pts = (s: { vertices: number[] }): P3[] =>
-        Array.from({ length: s.vertices.length / 3 }, (_, i) => [s.vertices[3 * i], s.vertices[3 * i + 1], s.vertices[3 * i + 2]] as P3)
-      const sub = (a: P3, b: P3): P3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-      const cross = (a: P3, b: P3): P3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
-      const dot = (a: P3, b: P3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-      /** Volume of a closed solid: sum of signed tetrahedra against the origin. */
-      const volume = (s: { vertices: number[]; indices: number[] }) => {
-        const v = pts(s)
-        let sum = 0
-        for (let i = 0; i < s.indices.length; i += 3) {
-          const [a, b, c] = [v[s.indices[i]], v[s.indices[i + 1]], v[s.indices[i + 2]]]
-          sum += dot(a, cross(b, c)) / 6
-        }
-        return Math.abs(sum)
-      }
-      /** Strict inside test for a convex solid: on the inner side of every face triangle. */
-      const inside = (s: { vertices: number[]; indices: number[] }) => {
-        const v = pts(s)
-        const c = v.reduce((a, p) => [a[0] + p[0] / v.length, a[1] + p[1] / v.length, a[2] + p[2] / v.length] as P3, [0, 0, 0] as P3)
-        const planes: [P3, P3][] = []
-        for (let i = 0; i < s.indices.length; i += 3) {
-          const [a, b, cc] = [v[s.indices[i]], v[s.indices[i + 1]], v[s.indices[i + 2]]]
-          let n = cross(sub(b, a), sub(cc, a))
-          if (Math.hypot(...n) < 1e-9) continue
-          if (dot(n, sub(c, a)) > 0) n = [-n[0], -n[1], -n[2]]
-          planes.push([n, a])
-        }
-        return (p: P3) => planes.every(([n, a]) => dot(n, sub(p, a)) < -1e-6 * Math.hypot(...n))
-      }
-      const aabb = (s: { vertices: number[] }) => [0, 1, 2].map((i) => r(s, i as 0 | 1 | 2))
-      const isBox = (s: { vertices: number[] }) => [0, 1, 2].every((i) => new Set(s.vertices.filter((_, k) => k % 3 === i)).size <= 2)
-      /** Intersection volume: exact for two axis-aligned boxes, sampled on a 1.5 mm grid otherwise. */
-      const overlap = (s: Solid, t: Solid) => {
-        const [A, B] = [aabb(s), aabb(t)]
-        const I = A.map(([a0, a1], i) => [Math.max(a0, B[i][0]), Math.min(a1, B[i][1])])
-        if (I.some(([a, b]) => b - a <= 1e-6)) return 0
-        if (isBox(s) && isBox(t)) return I.reduce((v, [a, b]) => v * (b - a), 1)
-        const [inS, inT] = [inside(s), inside(t)]
-        const h = 1.5
-        let n = 0
-        for (let x = I[0][0] + 0.3137; x < I[0][1]; x += h)
-          for (let y = I[1][0] + 0.2719; y < I[1][1]; y += h)
-            for (let z = I[2][0] + 0.4441; z < I[2][1]; z += h) if (inS([x, y, z]) && inT([x, y, z])) n++
-        return n * h ** 3
-      }
-      type Solid = ReturnType<typeof buildScene>['solids'][number]
       const stacks: [string, StackItem[]][] = [
         ['two layers', defaultDesign().wallDefault],
         ['gap', gap(25)],
@@ -337,9 +342,12 @@ describe('buildScene', () => {
 
     it('door wall is cut into boxes around the cutout, other walls stay whole', () => {
       const d = base()
+      d.dims.innerSource = 'manual'
+      d.dims.inner = { x: 1200, y: 1500, z: 700 }
       const solids = buildScene(d).solids
-      expect(solids.filter((x) => x.wall === 'front' && x.kind === 'layer')).toHaveLength(8)
-      expect(solids.filter((x) => x.wall === 'front' && x.kind === 'layer' && x.materialId === 'plywood')).toHaveLength(4)
+      // MDF: 4 pieces round the pocket. Plywood: 4 round the clear opening plus 4 round the routed rebate.
+      expect(solids.filter((x) => x.wall === 'front' && x.kind === 'layer')).toHaveLength(12)
+      expect(solids.filter((x) => x.wall === 'front' && x.kind === 'layer' && x.materialId === 'plywood')).toHaveLength(8)
       expect(solids.filter((x) => x.wall === 'back' && x.kind === 'layer')).toHaveLength(2)
       expect(solids.some((x) => x.wall === 'front' && x.door)).toBe(false)
     })
@@ -381,6 +389,83 @@ describe('buildScene', () => {
       const outers = doorSolids(d).filter((x) => x.name.startsWith('door-outer-') && !x.name.includes('frame'))
       expect(outers).toHaveLength(2)
       expect(doorSolids(d).every((x) => x.wall === 'front')).toBe(true)
+    })
+
+    it('no door solid intersects a wall layer: default, gap on, split, framed', () => {
+      const variants: [string, (d: Design) => void][] = [
+        ['default', () => {}],
+        ['gap on', (d) => {
+          d.wallDefault = [
+            { kind: 'layer', materialId: 'plywood', thickness: 18 },
+            { kind: 'gap', width: 40, decoupling: 'clips', fill: 'empty', fillMaterialId: 'rockwool' },
+            { kind: 'layer', materialId: 'mdf', thickness: 18 },
+          ]
+        }],
+        ['split', (d) => { d.door.outer.opening = 'split'; d.door.inner.opening = 'split' }],
+        ['framed', (d) => { d.door.outer.framed = true; d.door.inner.framed = true }],
+        ['framed, narrow frames', (d) => {
+          d.door.outer.framed = true; d.door.inner.framed = true
+          d.door.outer.frameWidth = 15; d.door.inner.frameWidth = 15
+        }],
+        ['framed, gap on', (d) => {
+          d.wallDefault = [
+            { kind: 'layer', materialId: 'plywood', thickness: 18 },
+            { kind: 'gap', width: 40, decoupling: 'clips', fill: 'empty', fillMaterialId: 'rockwool' },
+            { kind: 'layer', materialId: 'mdf', thickness: 18 },
+          ]
+          d.door.outer.framed = true; d.door.inner.framed = true
+        }],
+        ['three layers', (d) => {
+          d.wallDefault = [
+            { kind: 'layer', materialId: 'plywood', thickness: 18 },
+            { kind: 'layer', materialId: 'mdf', thickness: 18 },
+            { kind: 'layer', materialId: 'osb', thickness: 12 },
+          ]
+        }],
+      ]
+      const cases: [string, Design][] = [['the default design as shipped', defaultDesign()]]
+      for (const [label, edit] of variants) {
+        for (const side of ['front', 'left'] as const) {
+          const d = base()
+          d.door.side = side
+          // Room round the opening for the leaves, pocket and frame strips on either door wall.
+          d.dims.innerSource = 'manual'
+          d.dims.inner = { x: 1200, y: 1500, z: 700 }
+          edit(d)
+          cases.push([`${label}, ${side}`, d])
+        }
+      }
+      for (const [label, d] of cases) {
+        {
+          const solids = buildScene(d).solids
+          const doors = solids.filter((x) => x.kind === 'door')
+          const layers = solids.filter((x) => x.kind === 'layer')
+          expect(doors.length, label).toBeGreaterThan(1)
+          for (const a of doors) {
+            for (const b of layers) expect(overlap(a, b), `${label}: ${a.name} x ${b.name}`).toBeLessThan(1)
+            for (const b of doors) if (a !== b) expect(overlap(a, b), `${label}: ${a.name} x ${b.name}`).toBeLessThan(1)
+          }
+        }
+      }
+    })
+
+    it('the cutout notes match the drawn door wall: each layer piece frames the cutout its part states', () => {
+      const d = base()
+      d.dims.innerSource = 'manual'
+      d.dims.inner = { x: 1200, y: 1500, z: 700 }
+      const ps = buildParts(d, lib, defaultShop()).parts.filter((p) => /^Front (shell|liner)/.test(p.name))
+      const stated = ps.map((p) => p.notes.find((n) => n.startsWith('cut opening'))!.match(/(\d+(?:\.\d)?)×(\d+(?:\.\d)?)/)!.slice(1).map(Number))
+      const drawn = new Set<string>()
+      for (const k of [1, 2]) {
+        const pieces = buildScene(d).solids.filter((x) => x.kind === 'layer' && x.name.startsWith(`front-shell-${k}`))
+        // The hole: the gap between the pieces' extents along x and y.
+        const xs = pieces.map((p) => axisRange(p, 0)), ys = pieces.map((p) => axisRange(p, 1))
+        const { inner } = resolveDims(d)
+        const hx = Math.min(...xs.filter(([a]) => a > inner.x / 2 - 1e-6).map(([a]) => a)) - Math.max(...xs.filter(([, b]) => b < inner.x / 2).map(([, b]) => b))
+        const hy = Math.min(...ys.filter(([a]) => a > inner.y / 2 - 1e-6).map(([a]) => a)) - Math.max(...ys.filter(([, b]) => b < inner.y / 2).map(([, b]) => b))
+        drawn.add(`${Math.round(hx)}x${Math.round(hy)}`)
+      }
+      expect(drawn).toEqual(new Set(stated.map(([w, h]) => `${w}x${h}`)))
     })
 
     it('framed door adds frame strips', () => {

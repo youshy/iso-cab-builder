@@ -3,6 +3,7 @@ import { doorLayout, doorLeafLayers, type DoorLayout, type LeafLayout, type Wall
 import { inactiveFacetWarnings } from '../../geometry/space'
 import type { Design, DoorLeaf, DoorSide, Layer, StackItem } from '../../model/schema'
 import { addLayer, moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
+import { HEAVY_WALL_KG } from '../../model/defaults'
 import { design, fmtLen, library, update } from '../../model/store'
 import { NumberField } from '../NumberField'
 import { useRowIds } from '../useRowIds'
@@ -16,8 +17,6 @@ const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 const TITLE: Record<Which, string> = { outer: 'Outer door', inner: 'Inner door' }
 const showViews = signal<'both' | 'plan' | 'front' | 'side' | '3d'>('both')
 const exaggerate = signal(false)
-/** Above this wall door weight, butt hinges get a lift-off suggestion. */
-const HEAVY_WALL_KG = 25
 
 const asLayers = (s: StackItem[]): Layer[] => s.filter((i): i is Layer => i.kind === 'layer')
 const sizeText = (w: number, h: number) => `${fmtLen(w)} × ${fmtLen(h)}`
@@ -195,10 +194,11 @@ function Results({ d, l }: { d: Design; l: DoorLayout }) {
         <h4>{TITLE[x.which]}</h4>
         <ul class="results num">
           <li><span class="k">Leaf</span>{x.leaves.length === 2 ? '2 × ' : ''}{sizeText(first.w, first.h)}, {fmtLen(first.t)} thick</li>
-          <li><span class="k">Cutout</span>{sizeText(x.cutout.w, x.cutout.h)}</li>
+          {x.pocket && <li><span class="k">Pocket</span>{sizeText(x.pocket.w, x.pocket.h)}</li>}
+          <li><span class="k">{x.pocket ? 'Cutout, pocket layers' : 'Cutout'}</span>{sizeText(x.cutout.w, x.cutout.h)}</li>
           <li><span class="k">Clear opening</span>{sizeText(x.opening.w, x.opening.h)}</li>
           {x.frame && <li><span class="k">Frame</span>{fmtLen(x.frame.width)} × {fmtLen(x.frame.depth)} deep</li>}
-          {x.rebate && <li><span class="k">Rebate</span>{fmtLen(x.rebate.depth)} deep, {fmtLen(x.rebate.width)} wide</li>}
+          {x.rebate && <li><span class="k">Rebate in wall</span>{fmtLen(x.rebate.depth)} deep, {fmtLen(x.rebate.width)} past the opening</li>}
           {x.hinges.map((h) => (
             <li key={h.edge}><span class="k">Hinges, {h.edge}</span>{h.positions.map(fmtLen).join(', ')}</li>
           ))}

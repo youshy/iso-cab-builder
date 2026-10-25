@@ -165,3 +165,16 @@ export const FLOW_RESISTIVITY: Record<string, number> = { rockwool: 20000, foam:
 export const DEFAULT_FLOW_RESISTIVITY = 15000
 /** Most a single absorber layer may add to a stack's TL, dB. */
 export const ABSORBER_TL_CAP = 15
+
+/** Gap between the two halves of a split leaf, mm. */
+export const SPLIT_GAP = 3
+/** Width of the strip covering the gap between split leaves, mm. */
+export const ASTRAGAL_WIDTH = 30
+/** Leaf edges shorter than this get two hinges, longer ones three, mm. */
+export const MIN_HINGE_SPAN = 900
+/** Whole-wall door edges shorter than this get three hinges, longer ones four, mm. */
+export const MIN_WALL_HINGE_SPAN = 1200
+/** A whole-wall door heavier than this should not hang on butt hinges, kg. */
+export const HEAVY_WALL_KG = 25
+/** Clearance between the inner leaf and the pocket it sits in, each side, mm. */
+export const DOOR_CLEARANCE = 2

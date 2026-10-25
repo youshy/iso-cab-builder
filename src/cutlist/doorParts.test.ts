@@ -68,13 +68,19 @@ describe('doorParts dual', () => {
     expect(parts.filter((p) => /astragal/i.test(p.name) && /Inner/.test(p.name))).toHaveLength(0)
   })
 
-  it('rebated seal puts a rebate note on the inner leaf only', () => {
+  it('leaf parts carry no rebate note: the rebate is in the wall', () => {
     const d = base()
     const { parts } = doorParts(d, lib)
-    expect(parts.find((p) => /^Inner door leaf/.test(p.name))!.notes.join()).toMatch(/rebate/i)
-    expect(parts.find((p) => /^Outer door leaf/.test(p.name))!.notes.join()).not.toMatch(/rebate/i)
-    d.door.inner.sealTypeId = 'tape-20x10'
-    expect(doorParts(d, lib).parts.find((p) => /^Inner door leaf/.test(p.name))!.notes.join()).not.toMatch(/rebate/i)
+    expect(parts.filter((p) => /door leaf/.test(p.name)).every((p) => !/rebate/i.test(p.notes.join()))).toBe(true)
+  })
+
+  it('frame head of non-positive length is not emitted', () => {
+    const d = base()
+    d.door.outer.framed = true
+    d.door.outer.frameWidth = 10
+    d.door.opening = { w: 1, h: 600 }
+    const heads = doorParts(d, lib).parts.filter((p) => /frame head/.test(p.name))
+    expect(heads.every((p) => p.length > 0 && p.width > 0)).toBe(true)
   })
 
   it('door-gap gasket only when the door wall has a cavity', () => {

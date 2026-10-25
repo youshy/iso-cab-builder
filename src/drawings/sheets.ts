@@ -161,7 +161,10 @@ function wallCell(p: BoxPanel, boxes: number, tags: PartTags, matName: (id: stri
   return {
     len, wid,
     tag: tags.tag(panelPart(tags, p, boxes, matName)),
-    caption: [`Layer ${p.layerIndex + 1}: ${fmt(p.thickness)} ${matName(p.materialId)}, ${AXIS_NAME[L]} × ${AXIS_NAME[W]}`],
+    caption: [
+      `Layer ${p.layerIndex + 1}: ${fmt(p.thickness)} ${matName(p.materialId)}, ${AXIS_NAME[L]} × ${AXIS_NAME[W]}`,
+      ...(p.rebate ? [`rout rebate ${fmt(p.rebate.depth)} deep × ${fmt(p.rebate.width)} wide round the opening, inner face`] : []),
+    ],
     inner: mitred.length > 0 ? { u0: t.W1[1], u1: len - t.W2[1], v0: t.L1[1], v1: wid - t.L2[1] } : undefined,
     bevels: mitred.map((e) => ({ edge: e.edge, text: `${fmt(mitreAngle(p, e.edge))}° bevel` })),
     cutout: p.cutout

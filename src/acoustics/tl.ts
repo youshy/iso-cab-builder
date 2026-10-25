@@ -1,4 +1,4 @@
-import { SPLIT_GAP, doorLayout, doorLeafLayers, type LeafLayout } from '../doors/doors'
+import { doorLayout, doorLeafLayers, type LeafLayout } from '../doors/doors'
 import { doorWall } from '../doors/side'
 import {
   ABSORBER_TL_CAP,
@@ -6,6 +6,7 @@ import {
   DEFAULT_INSULATION,
   FLOW_RESISTIVITY,
   materialOrFirst,
+  SPLIT_GAP,
 } from '../model/defaults'
 import { resolveDims } from '../geometry/dimensions'
 import { meanPackingDepth } from '../geometry/facets'

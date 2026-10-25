@@ -36,10 +36,17 @@ export type BoxPanel = {
   /** How far each edge is set in at the layer's outer and inner face (from min/max): non-zero on mitred edges only. */
   taper: Record<PanelEdge, Range>
   /** Door opening in domain coordinates: u along lengthAxis, v along widthAxis. */
-  cutout: { u0: number; u1: number; v0: number; v1: number } | null
+  cutout: Cutout | null
+  /**
+   * The inner leaf's rebate where it only partly enters this layer: routed `depth` mm into the inner face,
+   * `width` mm beyond the cutout edge, out to `cutout` (the leaf pocket).
+   */
+  rebate: { depth: number; width: number; cutout: Cutout } | null
   /** The panel is part of a whole-wall door. */
   door: boolean
 }
+
+export type Cutout = { u0: number; u1: number; v0: number; v1: number }
 
 export type BoxBounds = { cavity: Record<Axis, Range>; outer: Record<Axis, Range> }
 
@@ -144,11 +151,25 @@ export function wallBoxes(d: Design, lib: Library): BoxPanel[] {
   const side = door.side
   const panels: BoxPanel[] = []
 
-  const cutSize = (k: number) => {
-    if (!door.outer || !door.inner) return null
-    if (k === 0) return door.outer.cutout
-    if (k === n - 1) return door.inner.cutout
-    return door.middleCutouts[k - 1] ?? door.inner.cutout
+  // The box holding the door wall's innermost leaf group holds the inner leaf.
+  const leafBox = sh[side].reduce((at, s, k) => (s.layers.length > 0 ? k : at), 0)
+  type Size = { w: number; h: number }
+  /**
+   * Cutout sizes for layer j of the door wall in box k. In the leaf's box, depth is measured from the inner
+   * face: a layer wholly within the rebate is cut to the pocket (plus frame strips); a layer the rebate only
+   * partly enters keeps the cutout it would have had and is routed out to the pocket.
+   */
+  const cutSizes = (k: number, share: Share, j: number): { size: Size; rebate: { depth: number; size: Size } | null } | null => {
+    if (!door.outer || !door.inner || !door.inner.rebate || !door.inner.pocket) return null
+    const base = k === 0 ? door.outer.cutout : door.inner.opening
+    if (k !== leafBox) return { size: base, rebate: null }
+    const [s0, s1] = depthOf(share, j)
+    const [a, b] = [share.t - s1, share.t - s0]
+    const R = door.inner.rebate.depth
+    if (b <= R + 1e-6) return { size: door.inner.cutout, rebate: null }
+    const pocket = door.inner.pocket
+    if (a < R - 1e-6 && pocket.w > base.w + 1e-6) return { size: base, rebate: { depth: R - a, size: pocket } }
+    return { size: base, rebate: null }
   }
   /** Depth of layer j of a wall's share, from the box's outer face; a wall without that layer is passed entirely. */
   const depthOf = (share: Share, j: number): Range => {
@@ -204,22 +225,25 @@ export function wallBoxes(d: Design, lib: Library): BoxPanel[] {
           if (kind === 'mitre') taper[edge] = [0, l.thickness * rate[a]![end]]
         }
 
-        let cutout: BoxPanel['cutout'] = null
-        const size = w === side ? cutSize(k) : null
-        if (size) {
+        const sizes = w === side ? cutSizes(k, share, j) : null
+        const place = (size: Size): Cutout => {
           const wAxis = doorWidthAxis(side)
           const rw: Range = [inner[wAxis] / 2 - size.w / 2, inner[wAxis] / 2 + size.w / 2]
           const rh: Range = [inner.y / 2 - size.h / 2, inner.y / 2 + size.h / 2]
           const [ru, rv] = L === wAxis ? [rw, rh] : [rh, rw]
-          cutout = { u0: ru[0], u1: ru[1], v0: rv[0], v1: rv[1] }
+          return { u0: ru[0], u1: ru[1], v0: rv[0], v1: rv[1] }
         }
+        const cutout = sizes ? place(sizes.size) : null
+        const rebate = sizes?.rebate
+          ? { depth: sizes.rebate.depth, width: (sizes.rebate.size.w - sizes.size.w) / 2, cutout: place(sizes.rebate.size) }
+          : null
 
         const nr: Range = high ? [b.outer[nAxis][1] - s1, b.outer[nAxis][1] - s0] : [b.outer[nAxis][0] + s0, b.outer[nAxis][0] + s1]
         const r: Record<Axis, Range> = { ...ext, [nAxis]: nr }
         panels.push({
           wall: w, boxIndex: k, layerIndex: j, materialId: l.materialId, thickness: l.thickness,
           min: { x: r.x[0], y: r.y[0], z: r.z[0] }, max: { x: r.x[1], y: r.y[1], z: r.z[1] },
-          lengthAxis: L, widthAxis: W, joinedEdges, taper, cutout,
+          lengthAxis: L, widthAxis: W, joinedEdges, taper, cutout, rebate,
           door: w === side && door.kind === 'wall',
         })
       })
@@ -256,23 +280,48 @@ export function around(outer: Rect, hole: Rect): Rect[] {
 
 export type PanelPiece = { min: Vec3; max: Vec3; taper: Record<PanelEdge, Range> }
 
-/** The slab as built: the whole panel, or the pieces left around its door cutout. Cut edges carry no taper. */
-export function panelPieces(p: BoxPanel): PanelPiece[] {
-  if (!p.cutout) return [{ min: p.min, max: p.max, taper: p.taper }]
+/** The pieces of one slab of a panel around one hole; cut edges carry no taper. */
+function piecesAround(p: BoxPanel, min: Vec3, max: Vec3, taper: Record<PanelEdge, Range>, hole: Cutout | null): PanelPiece[] {
+  if (!hole) return [{ min, max, taper }]
   const L = p.lengthAxis, W = p.widthAxis
-  const whole: Rect = [[p.min[L], p.max[L]], [p.min[W], p.max[W]]]
-  return around(whole, [[p.cutout.u0, p.cutout.u1], [p.cutout.v0, p.cutout.v1]]).map(([rl, rw]) => {
-    const min = { ...p.min, [L]: rl[0], [W]: rw[0] }
-    const max = { ...p.max, [L]: rl[1], [W]: rw[1] }
-    const keep = (e: PanelEdge, on: boolean): Range => (on ? p.taper[e] : [0, 0])
+  const whole: Rect = [[min[L], max[L]], [min[W], max[W]]]
+  return around(whole, [[hole.u0, hole.u1], [hole.v0, hole.v1]]).map(([rl, rw]) => {
+    const keep = (e: PanelEdge, on: boolean): Range => (on ? taper[e] : [0, 0])
     return {
-      min, max,
+      min: { ...min, [L]: rl[0], [W]: rw[0] },
+      max: { ...max, [L]: rl[1], [W]: rw[1] },
       taper: {
         L1: keep('L1', rw[0] === whole[1][0]), L2: keep('L2', rw[1] === whole[1][1]),
         W1: keep('W1', rl[0] === whole[0][0]), W2: keep('W2', rl[1] === whole[0][1]),
       },
     }
   })
+}
+
+/**
+ * The slab as built: the whole panel, or the pieces left around its door cutout. A routed rebate splits the
+ * slab through its thickness: the inner `depth` mm around the pocket, the rest around the cutout.
+ */
+export function panelPieces(p: BoxPanel): PanelPiece[] {
+  if (!p.rebate) return piecesAround(p, p.min, p.max, p.taper, p.cutout)
+  const n = wallNormal(p.wall)
+  const t = p.thickness
+  const split = HIGH.has(p.wall) ? p.min[n] + p.rebate.depth : p.max[n] - p.rebate.depth
+  // Taper between the outer face (depth 0) and the inner face (depth t), sliced to depths [f0, f1].
+  const slice = (f0: number, f1: number): Record<PanelEdge, Range> => {
+    const at = (r: Range, f: number) => r[0] + ((r[1] - r[0]) * f) / t
+    const out = NO_TAPER()
+    for (const e of Object.keys(out) as PanelEdge[]) out[e] = [at(p.taper[e], f0), at(p.taper[e], f1)]
+    return out
+  }
+  const D = t - p.rebate.depth
+  const [outerMin, outerMax, innerMin, innerMax] = HIGH.has(p.wall)
+    ? [{ ...p.min, [n]: split }, p.max, p.min, { ...p.max, [n]: split }]
+    : [p.min, { ...p.max, [n]: split }, { ...p.min, [n]: split }, p.max]
+  return [
+    ...piecesAround(p, outerMin, outerMax, slice(0, D), p.cutout),
+    ...piecesAround(p, innerMin, innerMax, slice(D, t), p.rebate.cutout),
+  ]
 }
 
 /** A wall's usable span along in-plane axis `a`: earlier walls in PRIORITY reach in at either end by their intrusion. */

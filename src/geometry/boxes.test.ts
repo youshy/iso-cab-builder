@@ -148,4 +148,52 @@ describe('wallBoxes', () => {
     const wp = wallBoxes(d, lib).filter((p) => p.wall === 'front')
     expect(wp.every((p) => p.door && p.cutout === null)).toBe(true)
   })
+
+  describe('door cutouts follow the inner leaf', () => {
+    // 390 x 800 clear opening, 25 overlap: inner leaf 440 x 850 x 18, seal 6, so the rebate is 24 deep.
+    const doorDesign = () => {
+      const d = base()
+      d.door.opening = { w: 390, h: 800 }
+      return d
+    }
+    const wh = (c: { u0: number; u1: number; v0: number; v1: number }) => [c.u1 - c.u0, c.v1 - c.v0]
+
+    it('gap off: a layer inside the rebate is cut to the leaf plus 2 mm each side; the layer it enters keeps the clear cutout and is routed', () => {
+      const [ply, mdf] = of(wallBoxes(doorDesign(), lib), 'front')
+      expect(wh(mdf.cutout!)).toEqual([444, 854])
+      expect(mdf.rebate).toBeNull()
+      expect(wh(ply.cutout!)).toEqual([390, 800])
+      expect(ply.rebate).toMatchObject({ depth: 6, width: 27 })
+      expect(wh(ply.rebate!.cutout)).toEqual([444, 854])
+    })
+
+    it('gap on: the liner is cut to the leaf plus clearance, the shell to the clear opening', () => {
+      const d = doorDesign()
+      d.wallDefault = gapStack()
+      const ps = wallBoxes(d, lib)
+      const [shell] = of(ps, 'front', 0), [liner] = of(ps, 'front', 1)
+      expect(wh(liner.cutout!)).toEqual([444, 854])
+      expect(wh(shell.cutout!)).toEqual([390, 800])
+      expect([shell.rebate, liner.rebate]).toEqual([null, null])
+    })
+
+    it('framed inner leaf: the pocket layers grow by the frame strips; the routed layer is unchanged', () => {
+      const d = doorDesign()
+      d.door.inner.framed = true
+      d.door.inner.frameWidth = 30
+      const [ply, mdf] = of(wallBoxes(d, lib), 'front')
+      expect(wh(mdf.cutout!)).toEqual([504, 914])
+      expect(wh(ply.cutout!)).toEqual([390, 800])
+      expect(ply.rebate).toMatchObject({ depth: 6, width: 27 })
+    })
+
+    it('framed outer leaf wider than the pocket margin: no rout needed', () => {
+      const d = doorDesign()
+      d.door.outer.framed = true
+      d.door.outer.frameWidth = 40
+      const [ply] = of(wallBoxes(d, lib), 'front')
+      expect(wh(ply.cutout!)).toEqual([470, 880])
+      expect(ply.rebate).toBeNull()
+    })
+  })
 })

@@ -275,7 +275,7 @@ describe('buildSheets content', () => {
     const doors = sheetsOf(oneCavity()).sheets.find((s) => s.step === 'doors')!
     expect(doors.svg).toMatch(/hinge centres/)
     expect(doors.svg).toMatch(/latch centres/)
-    expect(doors.svg).toMatch(/Rebate \d+ deep/)
+    expect(doors.svg).toMatch(/rebate in the wall \d+ deep from the inner face/)
     expect(doors.svg).toMatch(/seal line \d+(\.\d)? in from the leaf edge/)
     expect(doors.svg).toMatch(/clear opening/)
     expect(doors.svg).toMatch(/Frame strips \d+ wide/)

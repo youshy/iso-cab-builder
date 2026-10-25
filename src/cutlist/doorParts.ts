@@ -1,16 +1,14 @@
 import { doorLayout, doorLeafLayers, type LeafLayout } from '../doors/doors'
 import { doorWall } from '../doors/side'
 import { cavities, wallStack } from '../geometry/walls'
-import { DECOUPLING_STRIP_MATERIAL, materialOrFirst } from '../model/defaults'
+import { ASTRAGAL_WIDTH, DECOUPLING_STRIP_MATERIAL, materialOrFirst } from '../model/defaults'
 import type { Design, Layer, Library } from '../model/schema'
 import type { HardwareItem, Part } from './parts'
 
-export const ASTRAGAL_WIDTH = 30
 const GASKET_WIDTH = 50
 
 const r05 = (n: number) => Math.round(n * 2) / 2
 const r2 = (n: number) => Math.round(n * 100) / 100
-const num = (n: number) => String(Math.round(n * 10) / 10)
 
 type DoorPart = Omit<Part, 'id'>
 
@@ -25,11 +23,14 @@ export function doorParts(d: Design, lib: Library): { parts: DoorPart[]; hardwar
     else hw.set(name, { name, qty: r2(qty), unit })
   }
   const matName = (id: string) => lib.materials.find((m) => m.id === id)?.name ?? id
-  const add = (p: Omit<DoorPart, 'step' | 'warnings' | 'bevels' | 'qty' | 'notes'> & { qty?: number; notes?: string[] }) =>
+  /** Adds a part; one with no length, width or thickness (a frame head of a too-narrow opening) is left out. */
+  const add = (p: Omit<DoorPart, 'step' | 'warnings' | 'bevels' | 'qty' | 'notes'> & { qty?: number; notes?: string[] }) => {
+    if (r05(Math.min(p.length, p.width)) <= 0 || p.thickness <= 0) return
     parts.push({
       ...p, length: r05(Math.max(p.length, p.width)), width: r05(Math.min(p.length, p.width)),
       bevels: [], qty: p.qty ?? 1, step: 'doors', notes: p.notes ?? [], warnings: [],
     })
+  }
 
   const door = doorLayout(d, lib)
   const hingeName = (id: string) => lib.hinges.find((h) => h.id === id)?.name ?? id
@@ -60,9 +61,6 @@ export function doorParts(d: Design, lib: Library): { parts: DoorPart[]; hardwar
     layers[which].forEach((l, k) => {
       const notes: string[] = []
       if (split) notes.push('half of a split leaf')
-      if (which === 'inner' && seal?.rebated && leaf.rebate) {
-        notes.push(`rebate ${num(leaf.rebate.depth)} deep, ${num(leaf.rebate.width)} wide round the edge`)
-      }
       add({
         name: `${label} door leaf${split ? ' half' : ''}, layer ${k + 1} (${matName(l.materialId)})`,
         materialId: l.materialId, thickness: l.thickness, length: w, width: h, kind: 'leaf',
@@ -83,7 +81,7 @@ export function doorParts(d: Design, lib: Library): { parts: DoorPart[]; hardwar
         add({ name: `${label} door frame side`, materialId: frameMat, thickness: leaf.frame.depth, length: leaf.cutout.h, width: fw, qty: 2, kind: 'frame', notes: note })
         add({
           name: `${label} door frame head`, materialId: frameMat, thickness: leaf.frame.depth,
-          length: Math.max(leaf.cutout.w - 2 * fw, 0), width: fw, qty: 2, kind: 'frame', notes: note,
+          length: leaf.cutout.w - 2 * fw, width: fw, qty: 2, kind: 'frame', notes: note,
         })
       }
     }
@@ -97,7 +95,9 @@ export function doorParts(d: Design, lib: Library): { parts: DoorPart[]; hardwar
 
   const gap = cavities(wallStack(d, doorWall(d)))[0]
   if (gap) {
-    const { w, h } = door.inner!.cutout
+    // The gasket rings the larger of the shell and liner holes.
+    const w = Math.max(door.outer!.cutout.w, door.inner!.cutout.w)
+    const h = Math.max(door.outer!.cutout.h, door.inner!.cutout.h)
     add({
       name: 'Door gap gasket', materialId: materialOrFirst(lib, DECOUPLING_STRIP_MATERIAL, ['roll']),
       thickness: gap.width, length: 2 * (w + h), width: GASKET_WIDTH, kind: 'strip',

@@ -1,5 +1,5 @@
-import { ASTRAGAL_WIDTH } from '../cutlist/doorParts'
-import { doorLeafLayers, SPLIT_GAP, type DoorLayout, type LeafLayout, type WallDoorLayout } from '../doors/doors'
+import { doorLeafLayers, type DoorLayout, type LeafLayout, type WallDoorLayout } from '../doors/doors'
+import { ASTRAGAL_WIDTH, SPLIT_GAP } from '../model/defaults'
 import { resolveDims } from '../geometry/dimensions'
 import type { Design, Library } from '../model/schema'
 import { fmt, Pen, type BlockFn, type Tag } from './svg'
@@ -85,10 +85,14 @@ function leafBlock(d: Design, lib: Library, leaf: LeafLayout, tags: PartTags): B
   const notes = [
     `${leaf.direction === 'in' ? 'Opens inwards' : 'Opens outwards'}${split ? ', split leaf' : ''}, mounted on the ${leaf.mount}. ${hinge?.name ?? cfg.hingeTypeId} on the ${hingeEdges} edge.`,
     `Positions: ${edges(cfg.hingeEdge, 'hinge')}; ${edges(cfg.hingeEdge, 'latch')}, ${split ? 'on the meeting edges' : 'on the opposite edge'}.`,
-    `Thin line: clear opening ${fmt(leaf.opening.w)} × ${fmt(leaf.opening.h)}. Dash-dot: wall cutout ${fmt(leaf.cutout.w)} × ${fmt(leaf.cutout.h)}.`,
+    leaf.pocket
+      ? `Thin line: clear opening ${fmt(leaf.opening.w)} × ${fmt(leaf.opening.h)}. Dash-dot: cutout ${fmt(leaf.cutout.w)} × ${fmt(leaf.cutout.h)} in the wall layers the leaf sits in.`
+      : `Thin line: clear opening ${fmt(leaf.opening.w)} × ${fmt(leaf.opening.h)}. Dash-dot: wall cutout ${fmt(leaf.cutout.w)} × ${fmt(leaf.cutout.h)}.`,
     `Dashed: seal line ${fmt(ov / 2)} in from the leaf edge, ${seal?.name ?? cfg.sealTypeId}.`,
-    ...(leaf.rebate ? [`Rebate ${fmt(leaf.rebate.depth)} deep, ${fmt(leaf.rebate.width)} wide round the edge.`] : []),
-    ...(leaf.frame ? [`Frame strips ${fmt(leaf.frame.width)} wide, ${fmt(leaf.frame.depth)} deep round the opening.`] : []),
+    ...(leaf.rebate && leaf.pocket
+      ? [`Sits in a rebate in the wall ${fmt(leaf.rebate.depth)} deep from the inner face (leaf plus seal), pocket ${fmt(leaf.pocket.w)} × ${fmt(leaf.pocket.h)}.`]
+      : []),
+    ...(leaf.frame ? [`Frame strips ${fmt(leaf.frame.width)} wide, ${fmt(leaf.frame.depth)} deep round the ${leaf.pocket ? 'pocket' : 'opening'}.`] : []),
   ]
 
   return (s) => {

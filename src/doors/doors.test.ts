@@ -42,7 +42,9 @@ describe('doorLayout', () => {
     d.door.inner.framed = true
     const l = dualLayout(d, lib)
     expect(l.outer.frame).toEqual({ width: 45, depth: 12 }) // betweenDepth = 36 - (18 + 6)
-    expect(l.inner.frame).toEqual({ width: 45, depth: 24 }) // rebate depth
+    expect(l.inner.frame).toEqual({ width: 45, depth: 18 }) // the MDF layer wholly within the 24 mm rebate
+    expect(l.inner.pocket).toEqual({ w: 444, h: 1224 }) // leaf + 2 mm each side
+    expect(l.inner.cutout).toEqual({ w: 534, h: 1314 }) // pocket + 2 * 45 frame strips
     expect(l.outer.cutout).toEqual({ w: 480, h: 1260 }) // opening + 2 * 45 frame strips
     expect(l.outer.opening).toEqual({ w: 390, h: 1170 })
     expect(l.cabsThrough.every((c) => c.fits)).toBe(true)
@@ -87,7 +89,7 @@ describe('doorLayout', () => {
     const d = defaultDesign()
     const off = dualLayout(d, lib)
     expect(off.inner.mount).toBe('rebate')
-    expect(off.inner.rebate).toEqual({ depth: 24, width: 25 })
+    expect(off.inner.rebate).toEqual({ depth: 24, width: 27 }) // overlap + 2 mm clearance
     expect(off.betweenDepth).toBe(12)
     d.wallDefault = gapStack()
     const on = dualLayout(d, lib)
@@ -150,7 +152,7 @@ describe('several cavities', () => {
     const r = dualLayout(d, lib)
     expect(r.outer.leaves[0].t).toBe(18)
     expect(r.inner.mount).toBe('liner')
-    expect(r.middleCutouts).toEqual([r.inner.cutout])
+    expect(r.middleCutouts).toEqual([r.inner.opening])
     expect(r.betweenDepth).toBe(98 - r.inner.rebate!.depth)
   })
   it('no middle cutouts for one cavity', () => {

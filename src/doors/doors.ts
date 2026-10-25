@@ -1,6 +1,7 @@
 import { resolveDims } from '../geometry/dimensions'
 import { cabBox } from '../geometry/space'
 import { splitStack, stackThickness, wallStack } from '../geometry/walls'
+import { DOOR_CLEARANCE, MIN_HINGE_SPAN, MIN_WALL_HINGE_SPAN, SPLIT_GAP } from '../model/defaults'
 import type { Cab, Design, DoorLeaf, DoorSide, Layer, Library, WallId } from '../model/schema'
 import { autoDoorSide, doorWall } from './side'
 
@@ -8,11 +9,19 @@ export type LeafLayout = {
   which: 'outer' | 'inner'
   mount: 'shell' | 'liner' | 'rebate'
   opening: { w: number; h: number } // clear
-  cutout: { w: number; h: number } // wall cutout: clear opening plus frame strips
+  /**
+   * Wall cutout this leaf asks for. Outer: the clear opening plus frame strips. Inner: the pocket plus frame
+   * strips, cut through the layers that lie wholly within the rebate depth.
+   */
+  cutout: { w: number; h: number }
+  /** Inner leaf only: the hole the leaf sits in, the leaves (with the split gap) plus DOOR_CLEARANCE each side. */
+  pocket: { w: number; h: number } | null
   leaves: { w: number; h: number; t: number }[] // 1 or 2
+  /** Strips lining the cutout: from the clear opening (outer) or the pocket (inner) out to the cutout. */
   frame: { width: number; depth: number } | null
   hinges: { edge: string; positions: number[] }[]
   latches: number[]
+  /** Inner leaf only: depth (leaf plus seal, from the inner face) and width beyond the clear opening of its rebate. */
   rebate: { depth: number; width: number } | null
   swingRadius: number
   direction: 'in' | 'out'
@@ -42,16 +51,13 @@ export type DoorLayout = {
   inner: LeafLayout | null // null in wall mode
   wall: WallDoorLayout | null // null in dual mode
   betweenDepth: number
-  /** Wall cutouts through the leaf groups between the outer and inner leaves (equal to the inner cutout). */
+  /** Wall cutouts through the leaf groups between the outer and inner leaves (the clear opening). */
   middleCutouts: { w: number; h: number }[]
   cabsThrough: { cabId: string; fits: boolean }[]
   collisions: string[]
   notes: string[]
 }
 
-/** Gap between the two halves of a split leaf, mm. */
-export const SPLIT_GAP = 3
-const MIN_HINGE_SPAN = 900
 
 const mm = (n: number) => `${Math.round(n)} mm`
 
@@ -104,8 +110,6 @@ function hingeAndLatch(
     swingRadius: Math.max(...leaves.map((l) => (vertical ? l.w : l.h))),
   }
 }
-
-const MIN_WALL_HINGE_SPAN = 1200
 
 function wallDoorLayout(d: Design, lib: Library, side: DoorSide): WallDoorLayout {
   const o = resolveDims(d).outer
@@ -182,9 +186,17 @@ export function doorLayout(d: Design, lib: Library): DoorLayout {
   const rebateDepth = innerT + sealT(d.door.inner)
   const betweenDepth = stackDepth - rebateDepth
 
+  // The innermost leaf group holds the inner leaf; the layers wholly within the rebate depth are its pocket.
+  const innerGroup = gapOn ? wallSplit.liner : wallSplit.shell
+  let pocketDepth = 0
+  for (const l of [...innerGroup].reverse()) {
+    if (pocketDepth + l.thickness > rebateDepth + 1e-6) break
+    pocketDepth += l.thickness
+  }
+
   const frameDepth = gapOn
-    ? { outer: sumT(wallSplit.shell), inner: sumT(wallSplit.liner) }
-    : { outer: betweenDepth, inner: rebateDepth }
+    ? { outer: sumT(wallSplit.shell), inner: pocketDepth }
+    : { outer: betweenDepth, inner: pocketDepth }
 
   const build = (which: 'outer' | 'inner'): LeafLayout => {
     const cfg = d.door[which]
@@ -195,17 +207,20 @@ export function doorLayout(d: Design, lib: Library): DoorLayout {
       ? [0, 1].map(() => ({ w: (total.w - SPLIT_GAP) / 2, h: total.h, t }))
       : [{ ...total, t }]
     const hw = hingeAndLatch(cfg, leaves, split, lib)
+    const pocket = which === 'inner' ? { w: total.w + 2 * DOOR_CLEARANCE, h: total.h + 2 * DOOR_CLEARANCE } : null
+    const lined = pocket ?? clear
     return {
       which,
       mount: which === 'outer' ? 'shell' : gapOn ? 'liner' : 'rebate',
       opening: { ...clear },
       leaves,
+      pocket,
       cutout: cfg.framed
-        ? { w: clear.w + 2 * cfg.frameWidth, h: clear.h + 2 * cfg.frameWidth }
-        : { ...clear },
+        ? { w: lined.w + 2 * cfg.frameWidth, h: lined.h + 2 * cfg.frameWidth }
+        : { ...lined },
       frame: cfg.framed ? { width: cfg.frameWidth, depth: frameDepth[which] } : null,
       ...hw,
-      rebate: which === 'inner' ? { depth: rebateDepth, width: overlap } : null,
+      rebate: which === 'inner' ? { depth: rebateDepth, width: overlap + DOOR_CLEARANCE } : null,
       direction: cfg.opening === 'in' ? 'in' : 'out',
     }
   }
@@ -239,6 +254,6 @@ export function doorLayout(d: Design, lib: Library): DoorLayout {
     }
   }
 
-  const middleCutouts = wallSplit.middle.map(() => ({ ...inner.cutout }))
+  const middleCutouts = wallSplit.middle.map(() => ({ ...clear }))
   return { kind: 'dual', side, outer, inner, wall: null, betweenDepth, middleCutouts, cabsThrough, collisions, notes }
 }

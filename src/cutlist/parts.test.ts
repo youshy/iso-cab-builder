@@ -82,7 +82,8 @@ describe('buildParts joints', () => {
     expect(dims(named(ps, /^Top\/Bottom shell, layer 2/)[0])).toEqual([1436, 486])
     expect(dims(named(ps, /^Back shell, layer 1/)[0])).toEqual([1436, 1036])
     expect(dims(named(ps, /^Back shell, layer 2/)[0])).toEqual([1400, 1000])
-    expect(ps.some((p) => p.step !== 'doors' && p.notes.join(' ').includes('rebate'))).toBe(false)
+    // The only rebate is the door wall's routed one; the lap itself needs no machining.
+    expect(ps.some((p) => p.step !== 'doors' && !/^Front /.test(p.name) && p.notes.join(' ').includes('rebate'))).toBe(false)
   })
 
   it('rebate with a single layer: plain sides-past, no rebate note', () => {
@@ -95,6 +96,19 @@ describe('buildParts joints', () => {
     expect(side.notes).toEqual([])
     expect(dims(named(ps, /^Top\/Bottom shell/)[0])).toEqual([1400, 486])
     expect(named(ps, /^Top\/Bottom shell/)[0].notes).toEqual([])
+  })
+
+  it('door wall layers state their own cutout; the layer the rebate enters gets a rout note', () => {
+    const d = base()
+    d.door.opening = { w: 390, h: 800 }
+    const ps = parts(d).parts
+    const ply = named(ps, /^Front shell, layer 1/)[0]
+    const mdf = named(ps, /^Front shell, layer 2/)[0]
+    expect(mdf.notes).toEqual(['cut opening 444×854 centred'])
+    expect(ply.notes).toEqual([
+      'cut opening 390×800 centred',
+      'rout rebate 6 mm deep × 27 mm wide around the opening on the inner face',
+    ])
   })
 
   it('air gap with clips: liner box from inner + 2 x liner', () => {

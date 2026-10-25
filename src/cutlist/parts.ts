@@ -94,7 +94,9 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
     if (!p.cutout) return []
     const [u, v] = [p.cutout.u1 - p.cutout.u0, p.cutout.v1 - p.cutout.v0]
     const [w, h] = p.lengthAxis === 'y' ? [v, u] : [u, v]
-    return [`cut opening ${num(w)}×${num(h)} centred`]
+    const notes = [`cut opening ${num(w)}×${num(h)} centred`]
+    if (p.rebate) notes.push(`rout rebate ${num(p.rebate.depth)} mm deep × ${num(p.rebate.width)} mm wide around the opening on the inner face`)
+    return notes
   }
 
   const stripMaterial = materialOrFirst(lib, DECOUPLING_STRIP_MATERIAL, ['roll'])
