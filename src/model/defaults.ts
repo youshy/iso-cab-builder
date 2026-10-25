@@ -20,6 +20,7 @@ export function newCab(p: Partial<Cab> = {}): Cab {
       { x: 570, y: 950 },
     ],
     back: 'closed',
+    weightKg: 0,
     ...p,
   }
 }
@@ -50,17 +51,17 @@ export function defaultLibrary(): Library {
       mat('rubber', 'Rubber', 'roll', 1200, [3, 6], 2e6, 0.2, [0.04, 0.04, 0.04, 0.04, 0.04, 0.04]),
     ],
     hinges: [
-      { id: 'butt-75', name: 'Butt hinge 75 mm', kind: 'butt', leafWidth: 75, edgeInset: 150 },
-      { id: 'piano', name: 'Piano hinge', kind: 'piano', leafWidth: 30, edgeInset: 0 },
-      { id: 'lift-off', name: 'Lift-off hinge', kind: 'lift-off', leafWidth: 50, edgeInset: 150 },
+      { id: 'butt-75', name: 'Butt hinge 75 mm', kind: 'butt', leafWidth: 75, edgeInset: 150, weightKg: 0.15 },
+      { id: 'piano', name: 'Piano hinge', kind: 'piano', leafWidth: 30, edgeInset: 0, weightKg: 0.6 },
+      { id: 'lift-off', name: 'Lift-off hinge', kind: 'lift-off', leafWidth: 50, edgeInset: 150, weightKg: 0.4 },
     ],
     seals: [
       { id: 'tape-12x6', name: 'Compression tape 12x6', thickness: 6, width: 12, rebated: true },
       { id: 'tape-20x10', name: 'Compression tape 20x10', thickness: 10, width: 20, rebated: false },
     ],
     latches: [
-      { id: 'toggle', name: 'Toggle clamp', kind: 'toggle', edgeInset: 100 },
-      { id: 'compression', name: 'Compression latch', kind: 'compression', edgeInset: 100 },
+      { id: 'toggle', name: 'Toggle clamp', kind: 'toggle', edgeInset: 100, weightKg: 0.25 },
+      { id: 'compression', name: 'Compression latch', kind: 'compression', edgeInset: 100, weightKg: 0.2 },
     ],
   }
 }
@@ -150,6 +151,8 @@ export function materialOrFirst(lib: Library, preferredId: string, kinds: Materi
 export const DECOUPLING_STRIP_MATERIAL = 'rubber'
 export const PACKER_WIDTH = 40
 export const CLIP_GRID = 400
+/** Mass of one isolation clip, kg. */
+export const CLIP_WEIGHT_KG = 0.05
 
 /** Flow resistivity (Pa s/m2) of porous treatments for the Delany-Bazley absorber term; others use the default. */
 export const FLOW_RESISTIVITY: Record<string, number> = { rockwool: 20000, foam: 10000 }

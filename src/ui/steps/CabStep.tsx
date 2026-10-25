@@ -63,6 +63,10 @@ function CabCard({ cab, fits, many }: { cab: Cab; fits: boolean; many: boolean }
         <NumberField label="D" value={cab.d} onCommit={(v) => editCab(cab.id, (c) => (c.d = v))} />
       </div>
       <div class="row">
+        <span class="rl">Weight</span>
+        <NumberField ariaLabel="Cab weight" kind="plain" suffix="kg" min={0} allowZero width={64} value={cab.weightKg} onCommit={(v) => editCab(cab.id, (c) => (c.weightKg = v))} />
+      </div>
+      <div class="row">
         <label class="rl" for={`layout-${cab.id}`}>Speakers</label>
         <select
           id={`layout-${cab.id}`}

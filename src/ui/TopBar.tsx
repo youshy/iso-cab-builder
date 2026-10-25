@@ -1,8 +1,9 @@
 import { useState } from 'preact/hooks'
 import {
-  addProject, compareVersion, currentProject, basedOn, library, loadVersion, newProject, projectId,
-  projects, saveVersion, saveWarning, selectProject, setLibrary, units,
+  addProject, compareDesign, compareVersion, currentProject, basedOn, design, library, loadVersion, newProject, projectId,
+  projects, saveVersion, saveWarning, selectProject, setLibrary, shop, units,
 } from '../model/store'
+import { buildWeight } from '../cutlist/weight'
 import { libraryOpen } from './library/MaterialLibrary'
 import { exportProject, importProject } from '../storage/io'
 
@@ -35,6 +36,10 @@ export function TopBar() {
     setLibrary(res.library)
     addProject(res.project)
   }
+
+  const kg = buildWeight(design.value, library.value, shop.value).totalKg
+  const cmp = compareDesign.value
+  const delta = cmp && compareVersion.value !== null ? Math.round((kg - buildWeight(cmp, library.value, shop.value).totalKg) * 10) / 10 : null
 
   return (
     <header class="top">
@@ -71,6 +76,10 @@ export function TopBar() {
       <button type="button" class="btn" aria-pressed={libraryOpen.value} onClick={() => (libraryOpen.value = !libraryOpen.value)}>
         Materials
       </button>
+      <span class="num" title="Estimated build weight (excluding cab)">
+        ≈ {kg} kg
+        {delta !== null && ` (Δ ${delta > 0 ? '+' : delta < 0 ? '−' : ''}${Math.abs(delta)} kg vs v${compareVersion.value})`}
+      </span>
       <div class="sp" />
       <div class="ctl">
         Compare with

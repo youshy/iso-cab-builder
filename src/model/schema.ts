@@ -63,6 +63,7 @@ export const CabSchema = z.object({
   d: z.number().positive(),
   speakers: z.array(z.object({ x: z.number(), y: z.number() })), // centres on baffle, mm from cab bottom-left
   back: z.enum(['closed', 'open']),
+  weightKg: z.number().min(0).default(0), // optional, for the with-cab total
 })
 export type Cab = z.infer<typeof CabSchema>
 
@@ -185,13 +186,23 @@ export const DesignSchema = z.object({
 })
 export type Design = z.infer<typeof DesignSchema>
 
-export const HingeTypeSchema = z.object({
+/** Old libraries have no weight: fill a typical one for the kind. */
+const withKindWeight = (table: Record<string, number>) => (v: unknown) =>
+  v && typeof v === 'object' && (v as { weightKg?: unknown }).weightKg === undefined
+    ? { ...v, weightKg: table[(v as { kind?: string }).kind ?? ''] ?? 0.2 }
+    : v
+
+export const HINGE_WEIGHT_KG = { butt: 0.15, piano: 0.6, 'lift-off': 0.4 }
+export const LATCH_WEIGHT_KG = { toggle: 0.25, compression: 0.2 }
+
+export const HingeTypeSchema = z.preprocess(withKindWeight(HINGE_WEIGHT_KG), z.object({
   id: z.string(),
   name: z.string(),
   kind: z.enum(['butt', 'piano', 'lift-off']),
   leafWidth: z.number().min(0),
   edgeInset: z.number().min(0),
-})
+  weightKg: z.number().min(0), // per piece
+}))
 export type HingeType = z.infer<typeof HingeTypeSchema>
 
 export const SealTypeSchema = z.object({
@@ -203,12 +214,13 @@ export const SealTypeSchema = z.object({
 })
 export type SealType = z.infer<typeof SealTypeSchema>
 
-export const LatchTypeSchema = z.object({
+export const LatchTypeSchema = z.preprocess(withKindWeight(LATCH_WEIGHT_KG), z.object({
   id: z.string(),
   name: z.string(),
   kind: z.enum(['toggle', 'compression']),
   edgeInset: z.number().min(0),
-})
+  weightKg: z.number().min(0), // per piece
+}))
 export type LatchType = z.infer<typeof LatchTypeSchema>
 
 export const LibrarySchema = z.object({
