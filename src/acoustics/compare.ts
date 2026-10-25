@@ -1,7 +1,7 @@
 import { resolveDims } from '../geometry/dimensions'
-import type { Design } from '../model/schema'
+import type { Axis, Design } from '../model/schema'
 import { rectModes, type Mode } from './analytic'
-import type { SimMode, SimOptions, SimResult } from './fdtd'
+import type { SimMode, SimOptions, SimResult, SimSlice } from './fdtd'
 
 const MATCH = 0.03 // a mode within 3 percent of another counts as the same mode
 const MEDIAN_FROM = 100 // Hz
@@ -61,3 +61,22 @@ export function compareSimInput(current: Design, compare: Design): { d: Design; 
   if (current.sim.cabId === '' || d.cabs.some((c) => c.id === current.sim.cabId)) d.sim.cabId = current.sim.cabId
   return { d, opts: { fMax: current.sim.fMax } }
 }
+
+export type SliceRequest = { axis: Axis; at: number; f: number }
+const SAME = 0.01
+
+/**
+ * Slices every run computes: the mid-plane of each axis at the three lowest rigid-wall modes of the
+ * untilted box. Any other plane, position or frequency needs its own run.
+ */
+export function defaultSlices(d: Design, fMax: number): SliceRequest[] {
+  const { inner } = resolveDims(d)
+  const freqs = rectModes(inner, fMax).slice(0, 3).map((m) => Math.round(m.f * 10) / 10)
+  return (['x', 'y', 'z'] as const).flatMap((axis) => freqs.map((f) => ({ axis, at: inner[axis] / 2, f })))
+}
+
+const sameSlice = (a: SliceRequest, b: SliceRequest) => a.axis === b.axis && Math.abs(a.at - b.at) < SAME && Math.abs(a.f - b.f) < SAME
+
+export const isDefaultSlice = (d: Design, r: SliceRequest, fMax: number): boolean => defaultSlices(d, fMax).some((s) => sameSlice(s, r))
+
+export const findSlice = (slices: SimSlice[] | undefined, r: SliceRequest): SimSlice | undefined => slices?.find((s) => sameSlice(s, r))

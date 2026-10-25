@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { curveFrom, medianDb, modeDelta, nearestAnalytic, strongestModes } from '../../acoustics/compare'
+import { curveFrom, defaultSlices, findSlice, medianDb, modeDelta, nearestAnalytic, strongestModes } from '../../acoustics/compare'
 import type { SimResult, SimSlice } from '../../acoustics/fdtd'
-import { currentClient } from '../../acoustics/schedule'
+import { currentClient, customSlice } from '../../acoustics/schedule'
 import { resolveDims } from '../../geometry/dimensions'
 import type { Axis } from '../../model/schema'
 import { basedOn, compareVersion, design, simCompare, simCurrent, sliceRequest, units, update } from '../../model/store'
@@ -60,22 +60,22 @@ function SliceControls({ cur }: { cur: SimResult | null }) {
   const req = sliceRequest.value
   const [draft, setDraft] = useState<number | null>(null)
 
-  // First visit: ask for the strongest mode (125 Hz when there are none) on a plan slice through the middle.
+  // Once a result exists: a plan slice through the middle at the strongest mode (125 Hz when there are none).
   useEffect(() => {
-    if (sliceRequest.peek()) return
-    const top = cur && strongestModes(cur, 1)[0]
-    sliceRequest.value = { axis: 'y', at: Math.round(inner.y / 2), f: top ? Math.round(top.f * 10) / 10 : DEFAULT_F }
-  }, [])
+    if (sliceRequest.peek() || !cur) return
+    const top = strongestModes(cur, 1)[0]
+    sliceRequest.value = { axis: 'y', at: inner.y / 2, f: top ? Math.round(top.f * 10) / 10 : DEFAULT_F }
+  }, [cur])
   if (!req) return null
 
   const at = Math.min(inner[req.axis], Math.max(0, req.at))
-  const freqs = [...new Set([DEFAULT_F, req.f, ...(cur ? strongestModes(cur, 8).map((m) => Math.round(m.f * 10) / 10) : [])])].sort((a, b) => a - b)
+  const freqs = [...new Set([req.f, ...defaultSlices(d, d.sim.fMax).map((x) => x.f), ...(cur ? strongestModes(cur, 8).map((m) => Math.round(m.f * 10) / 10) : [])])].sort((a, b) => a - b)
   const set = (patch: Partial<typeof req>) => (sliceRequest.value = { ...req, ...patch })
   return (
     <>
       <div class="row">
         <span class="rl">Plane</span>
-        <Seg label="Slice plane" value={req.axis} options={PLANES} onPick={(axis) => set({ axis, at: Math.round(inner[axis] / 2) })} />
+        <Seg label="Slice plane" value={req.axis} options={PLANES} onPick={(axis) => set({ axis, at: inner[axis] / 2 })} />
       </div>
       <div class="row">
         <label class="rl" for="slice-at">Position</label>
@@ -105,13 +105,14 @@ export function AcousticsStep() {
   const [probe, setProbe] = useState(-1) // -1 = average of the cavity
   const probeIndex = probe < d.sim.probes.length ? probe : -1
   const req = sliceRequest.value
-  const slice = cur && req ? cur.slices.find((s) => s.axis === req.axis && s.at === req.at && s.f === req.f) : undefined
+  const custom = customSlice.value && req && findSlice([customSlice.value], req) ? customSlice.value : undefined
+  const slice = req ? (findSlice(cur?.slices, req) ?? custom) : undefined
 
   const refDb = cur ? medianDb(cur, fMax) : 0
   const pick = (r: SimResult) => (probeIndex < 0 ? r.avgDb : (r.probesDb[probeIndex] ?? r.avgDb))
   const curCurve = cur ? curveFrom(cur.freqs, pick(cur), refDb, fMax) : null
   const cmpCurve = cur && cmp ? curveFrom(cmp.freqs, pick(cmp), refDb, fMax) : null
-  const nameCur = basedOn.value === null ? 'Working copy' : `v${basedOn.value}`
+  const nameCur = basedOn.value === null ? 'Working copy' : `Working copy (from v${basedOn.value})`
   const modes = cur ? [...strongestModes(cur, 12)].sort((a, b) => a.f - b.f) : []
 
   return (
@@ -207,7 +208,7 @@ export function AcousticsStep() {
             </div>
           </div>
         ) : (
-          <p class="hint">{status === 'up to date' ? 'No map for this plane.' : 'The map updates with the next run.'}</p>
+          <p class="hint">{req ? 'Map updating. A new plane, position or frequency takes one extra run, in the background.' : 'Waiting for the first result.'}</p>
         )}
       </section>
     </>

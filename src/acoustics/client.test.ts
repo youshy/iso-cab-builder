@@ -30,6 +30,7 @@ class FakeWorker {
   terminated = false
   onmessage: ((e: { data: unknown }) => void) | null = null
   onerror: ((e: unknown) => void) | null = null
+  onmessageerror: ((e: unknown) => void) | null = null
   constructor() { FakeWorker.all.push(this) }
   postMessage(m: { id: number }) { this.posted.push(m) }
   terminate() { this.terminated = true }
@@ -65,6 +66,11 @@ describe('simKey', () => {
     expect(simKey(d, lib2, opts)).not.toBe(base)
   })
 
+  it('ignores the requested slices', () => {
+    const d = defaultDesign()
+    expect(simKey(d, lib, { fMax: 1000, slices: [{ axis: 'x', at: 10, f: 100 }] })).toBe(simKey(d, lib, opts))
+  })
+
   it('ignores the absorption of a material the simulation never reads', () => {
     const d = defaultDesign()
     const lib2 = structuredClone(lib)
@@ -90,7 +96,7 @@ describe('createSimClient', () => {
     const w = FakeWorker.all[0]
     w.reply({ id: w.posted[0].id, type: 'progress', p: 0.42 })
     expect(c.progress.value).toBeCloseTo(0.42)
-    w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(1) })
+    w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(1), ms: 5 })
     await expect(p).resolves.toMatchObject({ tag: 1 })
     expect(c.status.value).toBe('up to date')
   })
@@ -101,7 +107,7 @@ describe('createSimClient', () => {
     const p = c.request(d, lib, opts)
     vi.advanceTimersByTime(400)
     const w = FakeWorker.all[0]
-    w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(1) })
+    w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(1), ms: 5 })
     const first = await p
     const again = await c.request(structuredClone(d), lib, opts)
     expect(again).toBe(first)
@@ -120,7 +126,7 @@ describe('createSimClient', () => {
     expect(FakeWorker.all).toHaveLength(2)
     await expect(first).rejects.toThrow('superseded')
     const w = FakeWorker.all[1]
-    w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(2) })
+    w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(2), ms: 5 })
     await expect(second).resolves.toMatchObject({ tag: 2 })
   })
 
@@ -141,7 +147,7 @@ describe('createSimClient', () => {
       const p = c.request(faceted(n), lib, opts)
       vi.advanceTimersByTime(400)
       const w = FakeWorker.all[FakeWorker.all.length - 1]
-      w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(n) })
+      w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(n), ms: 5 })
       return p
     }
     for (let n = 1; n <= 9; n++) await run(n)
@@ -151,5 +157,107 @@ describe('createSimClient', () => {
     void c.request(faceted(1), lib, opts).catch(() => {})
     vi.advanceTimersByTime(400)
     expect(FakeWorker.all).toHaveLength(before + 1)
+  })
+  it('collapses a burst of requests into one run of the last', async () => {
+    const c = createSimClient(spawn)
+    c.request(faceted(1), lib, opts).catch(() => {})
+    vi.advanceTimersByTime(200)
+    c.request(faceted(2), lib, opts).catch(() => {})
+    vi.advanceTimersByTime(200)
+    const last = c.request(faceted(3), lib, opts)
+    vi.advanceTimersByTime(399)
+    expect(FakeWorker.all).toHaveLength(0)
+    vi.advanceTimersByTime(1)
+    expect(FakeWorker.all).toHaveLength(1)
+    const w = FakeWorker.all[0]
+    w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(3), ms: 5 })
+    await expect(last).resolves.toMatchObject({ tag: 3 })
+  })
+
+  it('does not restart the debounce for a pending request with the same key', () => {
+    const c = createSimClient(spawn)
+    void c.request(faceted(1), lib, opts)
+    vi.advanceTimersByTime(300)
+    void c.request(structuredClone(faceted(1)), lib, opts)
+    vi.advanceTimersByTime(100)
+    expect(FakeWorker.all).toHaveLength(1)
+  })
+
+  it('keeps a running simulation when an edit does not change the key', async () => {
+    const c = createSimClient(spawn)
+    const p = c.request(faceted(1), lib, opts)
+    vi.advanceTimersByTime(400)
+    const edited = faceted(1)
+    edited.door.outer.latchCount += 1
+    const again = c.request(edited, lib, opts)
+    expect(again).toBe(p)
+    expect(FakeWorker.all).toHaveLength(1)
+    expect(FakeWorker.all[0].terminated).toBe(false)
+    expect(c.status.value).toBe('running')
+    const w = FakeWorker.all[0]
+    w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(1), ms: 5 })
+    await expect(p).resolves.toMatchObject({ tag: 1 })
+  })
+
+  it('reports the compute time sent by the worker, not the wall time', async () => {
+    const c = createSimClient(spawn)
+    const p = c.request(defaultDesign(), lib, opts)
+    vi.advanceTimersByTime(400)
+    vi.advanceTimersByTime(7000)
+    const w = FakeWorker.all[0]
+    w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(1), ms: 2400 })
+    await p
+    expect(c.runtimeMs.value).toBe(2400)
+  })
+
+  it('settles with an error when spawning throws', async () => {
+    const c = createSimClient(() => { throw new Error('no workers') })
+    const p = c.request(defaultDesign(), lib, opts)
+    p.catch(() => {})
+    vi.advanceTimersByTime(400)
+    await expect(p).rejects.toThrow('no workers')
+    expect(c.error.value).toBe('no workers')
+    expect(c.status.value).toBe('stale')
+  })
+
+  it('settles with an error on a messageerror', async () => {
+    const c = createSimClient(spawn)
+    const p = c.request(defaultDesign(), lib, opts)
+    p.catch(() => {})
+    vi.advanceTimersByTime(400)
+    FakeWorker.all[0].onmessageerror?.({})
+    await expect(p).rejects.toThrow()
+    expect(c.status.value).toBe('stale')
+    expect(FakeWorker.all[0].terminated).toBe(true)
+  })
+
+  it('stops a run that exceeds the watchdog time', async () => {
+    const c = createSimClient(spawn)
+    const p = c.request(defaultDesign(), lib, { fMax: 2000 })
+    p.catch(() => {})
+    vi.advanceTimersByTime(400)
+    vi.advanceTimersByTime(30_000 * 8 - 1)
+    expect(FakeWorker.all[0].terminated).toBe(false)
+    vi.advanceTimersByTime(1)
+    await expect(p).rejects.toThrow('timed out')
+    expect(FakeWorker.all[0].terminated).toBe(true)
+    expect(c.status.value).toBe('stale')
+  })
+
+  it('uses a custom key function and cache size', async () => {
+    const c = createSimClient(spawn, { cacheSize: 1, keyOf: (d, l, o) => simKey(d, l, o) + JSON.stringify(o.slices) })
+    const run = async (at: number) => {
+      const p = c.request(faceted(1), lib, { fMax: 1000, slices: [{ axis: 'x', at, f: 100 }] })
+      vi.advanceTimersByTime(400)
+      const w = FakeWorker.all[FakeWorker.all.length - 1]
+      w.reply({ id: w.posted[0].id, type: 'done', result: fakeResult(at), ms: 1 })
+      return p
+    }
+    await run(1)
+    await run(2)
+    const n = FakeWorker.all.length
+    void c.request(faceted(1), lib, { fMax: 1000, slices: [{ axis: 'x', at: 1, f: 100 }] }).catch(() => {})
+    vi.advanceTimersByTime(400)
+    expect(FakeWorker.all.length).toBe(n + 1) // size 1: the first was evicted
   })
 })

@@ -1,4 +1,4 @@
-import { currentClient } from '../acoustics/schedule'
+import { compareClient, currentClient } from '../acoustics/schedule'
 import { medianDb, modeDelta, strongestModes } from '../acoustics/compare'
 import { basedOn, compareVersion, design, simCompare, simCurrent } from '../model/store'
 
@@ -24,7 +24,8 @@ export function ModeStrip({ onOpenAcoustics }: { onOpenAcoustics: () => void }) 
   const fMax = design.value.sim.fMax
   const top = cur ? strongestModes(cur, 5).sort((a, b) => a.f - b.f) : []
   const ref = cur ? medianDb(cur, fMax) : 0
-  const label = basedOn.value === null ? 'working copy' : `v${basedOn.value}`
+  const label = basedOn.value === null ? 'working copy' : `working copy (from v${basedOn.value})`
+  const comparing = compareVersion.value !== null && (compareClient.status.value !== 'up to date' || !simCompare.value)
   const dot = status === 'up to date' ? 'ok' : status === 'running' ? 'run' : 'stale'
 
   return (
@@ -32,6 +33,7 @@ export function ModeStrip({ onOpenAcoustics }: { onOpenAcoustics: () => void }) 
       <div class="status" role="status">
         <span class={`dot ${dot}`} />
         Simulation {statusText(status, c.progress.value, c.runtimeMs.value)}
+        {comparing && <span> · comparing…</span>}
         {c.error.value && <span class="u"> · failed: {c.error.value}</span>}
       </div>
       <div class="mlist num">

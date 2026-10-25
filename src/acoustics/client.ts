@@ -1,4 +1,4 @@
-import { signal, type Signal } from '@preact/signals'
+import { signal } from '@preact/signals'
 import { doorWall } from '../doors/side'
 import { resolveDims } from '../geometry/dimensions'
 import { activeInterior, wallStack, WALLS } from '../geometry/walls'
@@ -50,92 +50,116 @@ export function simKey(d: Design, lib: Library, opts: SimOptions): string {
     door: { kind: d.door.kind, wall: door },
     absorption,
     probes: d.sim.probes,
-    opts,
+    opts: { fMax: opts.fMax, duration: opts.duration }, // slices are outputs, not inputs
   })
 }
 
 export const DEBOUNCE_MS = 400
 const CACHE_SIZE = 8
+/** A run that takes longer than this is assumed stuck: 30 s at 1000 Hz, growing with fMax cubed. */
+export const watchdogMs = (opts: SimOptions): number => 30_000 * (opts.fMax / 1000) ** 3
 
-type Active = { key: string; promise: Promise<SimResult>; reject: (e: Error) => void; worker: Worker }
+export type ClientOptions = {
+  debounceMs?: number
+  cacheSize?: number
+  /** What makes two requests the same result; defaults to simKey. */
+  keyOf?: (d: Design, lib: Library, opts: SimOptions) => string
+}
 
-export function createSimClient(spawn: () => Worker, debounceMs = DEBOUNCE_MS) {
+type Job = {
+  key: string
+  promise: Promise<SimResult>
+  resolve: (r: SimResult) => void
+  reject: (e: Error) => void
+}
+
+export function createSimClient(spawn: () => Worker, options: ClientOptions = {}) {
+  const { debounceMs = DEBOUNCE_MS, cacheSize = CACHE_SIZE, keyOf = simKey } = options
   const status = signal<SimStatus>('stale')
   const progress = signal(0)
+  /** Compute time of the last finished run, measured inside the worker (no start-up). */
   const runtimeMs = signal<number | null>(null)
   const error = signal<string | null>(null)
   const cache = new Map<string, SimResult>() // insertion order = least recently used first
   let nextId = 1
   let timer: ReturnType<typeof setTimeout> | undefined
-  let pending: { key: string; reject: (e: Error) => void } | undefined
-  let active: Active | undefined
+  let pending: Job | undefined
+  let active: (Job & { worker: Worker | null; watchdog?: ReturnType<typeof setTimeout> }) | undefined
 
   const superseded = () => new Error('superseded')
+
+  function stopActive(): void {
+    if (!active) return
+    clearTimeout(active.watchdog)
+    active.worker?.terminate()
+    active = undefined
+  }
 
   function cancelAll(): void {
     clearTimeout(timer)
     pending?.reject(superseded())
     pending = undefined
     if (active) {
-      active.worker.terminate()
-      active.reject(superseded())
-      active = undefined
+      const job = active
+      stopActive()
+      job.reject(superseded())
     }
   }
 
   function remember(key: string, r: SimResult): void {
     cache.delete(key)
     cache.set(key, r)
-    if (cache.size > CACHE_SIZE) cache.delete(cache.keys().next().value as string)
+    if (cache.size > cacheSize) cache.delete(cache.keys().next().value as string)
   }
 
-  function run(key: string, d: Design, lib: Library, opts: SimOptions): Promise<SimResult> {
+  function fail(job: Job, message: string): void {
+    stopActive()
+    error.value = message
+    status.value = 'stale'
+    job.reject(new Error(message))
+  }
+
+  function run(job: Job, d: Design, lib: Library, opts: SimOptions): void {
     const id = nextId++
-    const worker = spawn()
-    const started = performance.now()
     status.value = 'running'
     progress.value = 0
     error.value = null
-    const promise = new Promise<SimResult>((resolve, reject) => {
-      const finish = () => { worker.terminate(); if (active?.worker === worker) active = undefined }
-      active = { key, promise: undefined as never, reject, worker }
-      worker.onmessage = (e: MessageEvent<WorkerReply>) => {
-        const m = e.data
-        if (m.id !== id) return
-        if (m.type === 'progress') progress.value = m.p
-        else if (m.type === 'done') {
-          finish()
-          remember(key, m.result)
-          runtimeMs.value = performance.now() - started
-          status.value = 'up to date'
-          resolve(m.result)
-        } else {
-          finish()
-          error.value = m.message
-          status.value = 'stale'
-          reject(new Error(m.message))
-        }
-      }
-      worker.onerror = (e: ErrorEvent) => {
-        finish()
-        error.value = e.message || 'Simulation worker failed'
-        status.value = 'stale'
-        reject(new Error(error.value))
-      }
-      const msg: WorkerRequest = { id, d, lib, opts }
-      worker.postMessage(msg)
-    })
-    if (active?.worker === worker) active.promise = promise
-    return promise
+    let worker: Worker
+    try {
+      worker = spawn()
+    } catch (e) {
+      active = { ...job, worker: null }
+      fail(job, e instanceof Error ? e.message : String(e))
+      return
+    }
+    active = { ...job, worker, watchdog: setTimeout(() => fail(job, 'Simulation timed out'), watchdogMs(opts)) }
+    worker.onmessage = (e: MessageEvent<WorkerReply>) => {
+      const m = e.data
+      if (m.id !== id) return
+      if (m.type === 'progress') progress.value = m.p
+      else if (m.type === 'done') {
+        stopActive()
+        remember(job.key, m.result)
+        runtimeMs.value = m.ms
+        status.value = 'up to date'
+        job.resolve(m.result)
+      } else fail(job, m.message)
+    }
+    worker.onerror = (e: ErrorEvent) => fail(job, e.message || 'Simulation worker failed')
+    worker.onmessageerror = () => fail(job, 'Simulation result could not be read')
+    const msg: WorkerRequest = { id, d, lib, opts }
+    worker.postMessage(msg)
   }
 
   /**
-   * Ask for a result. Status goes `stale` at once, the run starts after the debounce, and any earlier
-   * pending or running request is cancelled (its promise rejects with "superseded").
+   * Ask for a result. Status goes `stale` at once and the run starts after the debounce; an earlier
+   * pending or running request with a different key is cancelled (its promise rejects with
+   * "superseded"). Asking again for the key already pending or running changes nothing.
    */
   function request(d: Design, lib: Library, opts: SimOptions): Promise<SimResult> {
-    const key = simKey(d, lib, opts)
+    const key = keyOf(d, lib, opts)
     if (active?.key === key) return active.promise
+    if (pending?.key === key) return pending.promise
     cancelAll()
     const hit = cache.get(key)
     if (hit) {
@@ -144,17 +168,17 @@ export function createSimClient(spawn: () => Worker, debounceMs = DEBOUNCE_MS) {
       return Promise.resolve(hit)
     }
     status.value = 'stale'
-    return new Promise<SimResult>((resolve, reject) => {
-      pending = { key, reject }
-      timer = setTimeout(() => {
-        pending = undefined
-        run(key, structuredClone(d), structuredClone(lib), opts).then(resolve, reject)
-      }, debounceMs)
-    })
+    let resolve!: Job['resolve'], reject!: Job['reject']
+    const promise = new Promise<SimResult>((res, rej) => { resolve = res; reject = rej })
+    const job: Job = { key, promise, resolve, reject }
+    pending = job
+    const dc = structuredClone(d), lc = structuredClone(lib)
+    timer = setTimeout(() => {
+      pending = undefined
+      run(job, dc, lc, opts)
+    }, debounceMs)
+    return promise
   }
 
-  return { status, progress, runtimeMs, error, request } satisfies {
-    status: Signal<SimStatus>; progress: Signal<number>; runtimeMs: Signal<number | null>; error: Signal<string | null>
-    request: typeof request
-  }
+  return { status, progress, runtimeMs, error, request }
 }

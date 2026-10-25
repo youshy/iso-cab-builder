@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDesign } from '../model/defaults'
-import { compareSimInput, curveFrom, medianDb, modeDelta, nearestAnalytic, strongestModes } from './compare'
+import { compareSimInput, curveFrom, defaultSlices, findSlice, isDefaultSlice, medianDb, modeDelta, nearestAnalytic, strongestModes } from './compare'
 import type { SimMode, SimResult } from './fdtd'
 
 const result = (modes: SimMode[], avg: number[] = [10, 20, 30]): SimResult =>
@@ -63,5 +63,26 @@ describe('compare helpers', () => {
     cmp.cabs.push({ ...cmp.cabs[0], id: cur.sim.cabId })
     expect(compareSimInput(cur, cmp).d.sim.cabId).toBe(cur.sim.cabId)
     expect(cmp.sim.fMax).toBe(1500) // input untouched
+  })
+
+  it('defaults to the mid-plane of each axis at the three lowest analytic modes', () => {
+    const d = defaultDesign()
+    d.dims.mode = 'inside'
+    d.dims.innerSource = 'manual'
+    d.dims.inner = { x: 1000, y: 600, z: 400 }
+    const s = defaultSlices(d, 1000)
+    expect(s).toHaveLength(9)
+    const fs = s.filter((x) => x.axis === 'y').map((x) => x.f)
+    ;[171.5, 285.8, 333.3].forEach((f, i) => expect(fs[i]).toBeCloseTo(f, 0))
+    expect(s.find((x) => x.axis === 'z')?.at).toBe(200)
+    expect(isDefaultSlice(d, { ...s[0] }, 1000)).toBe(true)
+    expect(isDefaultSlice(d, { ...s[0], at: s[0].at + 5 }, 1000)).toBe(false)
+  })
+
+  it('finds a slice by plane, position and frequency', () => {
+    const sl = { axis: 'y' as const, at: 300, f: 171.5, w: 1, h: 1, values: new Float32Array(1) }
+    expect(findSlice([sl], { axis: 'y', at: 300.004, f: 171.5 })).toBe(sl)
+    expect(findSlice([sl], { axis: 'x', at: 300, f: 171.5 })).toBeUndefined()
+    expect(findSlice(undefined, { axis: 'y', at: 300, f: 171.5 })).toBeUndefined()
   })
 })
