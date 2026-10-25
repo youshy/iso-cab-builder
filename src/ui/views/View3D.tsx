@@ -23,7 +23,7 @@ const REBUILD_DELAY = 50
 const HIGH: WallId[] = ['right', 'top', 'front']
 // Flat greys approximating the token palette (--bg, --line-strong, --ink-3, --accent).
 const BG = '#f7f6f3'
-const COLOR = { door: '#cdbfa8', facet: '#9a968f', accent: '#b45a2c', cab: '#6f6c66', treatment: '#c9bfae', edge: '#5d5a54' }
+const COLOR = { door: '#cdbfa8', facet: '#9a968f', accent: '#b45a2c', cab: '#6f6c66', front: '#2f2d2a', treatment: '#c9bfae', edge: '#5d5a54' }
 
 /** Whether the box grew or shrank enough since the last camera fit to fit it again. */
 export function needsRefit(prevDiag: number, nextDiag: number): boolean {
@@ -66,7 +66,8 @@ function solidLook(s: Solid, lib: Library, highlight?: WallId): Look {
     }
     case 'facet': return { color: s.wall === highlight ? COLOR.accent : COLOR.facet, opacity: 1, edge }
     case 'door': return { color: COLOR.door, opacity: 1, edge }
-    case 'cab': return { color: COLOR.cab, opacity: 0.55, edge }
+    case 'cab': if (s.name === 'cab-front') return { color: COLOR.front, opacity: 0.95, edge }
+      return { color: COLOR.cab, opacity: 0.55, edge }
     case 'treatment': return { color: COLOR.treatment, opacity: 0.85, edge }
     default: return { color: COLOR.facet, opacity: 1, edge }
   }

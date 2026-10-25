@@ -1,23 +1,60 @@
 import { doorWall } from '../doors/side'
 import type { Axis, Cab, Design, Layer, Library, Material, Vec3, WallId } from '../model/schema'
-import { resolveDims } from './dimensions'
+import { cabFootprint, resolveDims } from './dimensions'
 import { facetOffsetAt } from './facets'
 import { panelExtent, panelTreatments, wallIntrusion, wallTreatments, wallTreatmentThickness } from './treatments'
 import { activeInterior, oppositeWall, wallStack, WALLS } from './walls'
 
 export type Box = { min: Vec3; max: Vec3 }
 
-export function cabBox(d: Design, cab: Cab): Box {
+/** Where a cab stands: centre of its footprint (middle of the free x span, on the floor, behind the rotated depth) and its turn. */
+export function cabPose(d: Design, cab: Cab): { centre: Vec3; yaw: number } {
   const { inner } = resolveDims(d)
+  const fp = cabFootprint(cab, d.cabYaw)
   const lo = wallIntrusion(d, 'left')
   const hi = inner.x - wallIntrusion(d, 'right')
-  const x0 = (lo + hi) / 2 - cab.w / 2
-  const y0 = wallIntrusion(d, 'bottom')
-  const z0 = wallIntrusion(d, 'back') + d.dims.clearance
   return {
-    min: { x: x0, y: y0, z: z0 },
-    max: { x: x0 + cab.w, y: y0 + cab.h, z: z0 + cab.d },
+    centre: {
+      x: (lo + hi) / 2,
+      y: wallIntrusion(d, 'bottom') + cab.h / 2,
+      z: wallIntrusion(d, 'back') + d.dims.clearance + fp.d / 2,
+    },
+    yaw: d.cabYaw,
   }
+}
+
+/** Axis-aligned bounding box of the (possibly rotated) cab. */
+export function cabBox(d: Design, cab: Cab): Box {
+  const { centre } = cabPose(d, cab)
+  const fp = cabFootprint(cab, d.cabYaw)
+  return {
+    min: { x: centre.x - fp.w / 2, y: centre.y - cab.h / 2, z: centre.z - fp.d / 2 },
+    max: { x: centre.x + fp.w / 2, y: centre.y + cab.h / 2, z: centre.z + fp.d / 2 },
+  }
+}
+
+/** Unit vectors of a cab turned by yaw: facing (out of the front baffle) and right (seen from the front). */
+export function cabAxes(yaw: number): { facing: Vec3; right: Vec3 } {
+  const r = (yaw * Math.PI) / 180
+  const [s, c] = [Math.sin(r), Math.cos(r)]
+  return { facing: { x: s, y: 0, z: c }, right: { x: c, y: 0, z: -s } }
+}
+
+/** Speaker centres on the front baffle in domain coordinates, with the unit vector each one faces. */
+export function speakerPositions(d: Design, cab: Cab): { p: Vec3; facing: Vec3 }[] {
+  const { centre, yaw } = cabPose(d, cab)
+  const { facing, right } = cabAxes(yaw)
+  return cab.speakers.map((s) => {
+    const u = s.x - cab.w / 2
+    return {
+      p: {
+        x: centre.x + u * right.x + (cab.d / 2) * facing.x,
+        y: centre.y - cab.h / 2 + s.y,
+        z: centre.z + u * right.z + (cab.d / 2) * facing.z,
+      },
+      facing,
+    }
+  })
 }
 
 export function cabFit(d: Design): { cabId: string; fits: boolean; shortBy: Vec3 }[] {
@@ -25,13 +62,28 @@ export function cabFit(d: Design): { cabId: string; fits: boolean; shortBy: Vec3
   const c2 = 2 * d.dims.clearance
   return d.cabs.map((cab) => {
     const short = (need: number, have: number) => Math.max(0, need - Math.max(0, have))
+    const fp = cabFootprint(cab, d.cabYaw)
     const shortBy = {
-      x: short(cab.w + c2, free.x),
+      x: short(fp.w + c2, free.x),
       y: short(cab.h + c2, free.y),
-      z: short(cab.d + c2, free.z),
+      z: short(fp.d + c2, free.z),
     }
     return { cabId: cab.id, fits: shortBy.x === 0 && shortBy.y === 0 && shortBy.z === 0, shortBy }
   })
+}
+
+/** Point test for the cab as an oriented box: bounding box first, then the turned footprint. Centre and trig are resolved once. */
+function orientedTest(d: Design, cab: Cab): (p: Vec3) => boolean {
+  const b = cabBox(d, cab)
+  const { centre, yaw } = cabPose(d, cab)
+  if (yaw % 180 === 0) return (p) => inside(b, p)
+  const { facing, right } = cabAxes(yaw)
+  const [hw, hd] = [cab.w / 2, cab.d / 2]
+  return (p) => {
+    if (!inside(b, p)) return false
+    const dx = p.x - centre.x, dz = p.z - centre.z
+    return Math.abs(dx * right.x + dz * right.z) <= hw && Math.abs(dx * facing.x + dz * facing.z) <= hd
+  }
 }
 
 const inside = (b: Box, p: Vec3) =>
@@ -59,7 +111,7 @@ function spaceLayout(d: Design) {
     return { w, wi, treatments: wallTreatments(d, w), treatment: wallTreatmentThickness(d, w) }
   })
   const cab = d.sim.cabId === '' ? undefined : d.cabs.find((c) => c.id === d.sim.cabId)
-  const cabB = cab ? cabBox(d, cab) : null
+  const cabIn = cab ? orientedTest(d, cab) : null
   const panels = d.panels.map((panel) => {
     const [u, v] = otherAxes(panel.normal)
     return { panel, u, v, ...panelExtent(d, panel) }
@@ -68,18 +120,18 @@ function spaceLayout(d: Design) {
   const inPlane = (pl: (typeof panels)[number], p: Vec3) =>
     p[pl.u] >= pl.panel.u0 && p[pl.u] <= pl.panel.u1 && p[pl.v] >= pl.panel.v0 && p[pl.v] <= pl.panel.v1
   const outside = (p: Vec3) => p.x < 0 || p.y < 0 || p.z < 0 || p.x > inner.x || p.y > inner.y || p.z > inner.z
-  return { inner, walls, cabB, panels, facetOffset, inPlane, outside }
+  return { inner, walls, cabIn, panels, facetOffset, inPlane, outside }
 }
 
 /** A point test equivalent to isAir(d, p), with the design resolved once up front. */
 export function airTest(d: Design): (p: Vec3) => boolean {
-  const { inner, walls, cabB, panels, facetOffset, inPlane, outside } = spaceLayout(d)
+  const { inner, walls, cabIn, panels, facetOffset, inPlane, outside } = spaceLayout(d)
   return (p) => {
     if (outside(p)) return false
     for (const wl of walls) {
       if (wallDistance(wl.w, p, inner) < facetOffset(wl, p) + wl.treatment) return false
     }
-    if (cabB && inside(cabB, p)) return false
+    if (cabIn && cabIn(p)) return false
     for (const pl of panels) {
       if (p[pl.panel.normal] >= pl.lo && p[pl.panel.normal] <= pl.hi && inPlane(pl, p)) return false
     }
@@ -158,7 +210,7 @@ export function materialTest(d: Design, lib: Library): (p: Vec3) => Material | n
     for (const wl of L.walls) {
       if (wl.wi && wallDistance(wl.w, p, L.inner) < L.facetOffset(wl, p)) return byId(wl.wi.panelMaterialId)
     }
-    if (L.cabB && inside(L.cabB, p)) return cabMaterial
+    if (L.cabIn && L.cabIn(p)) return cabMaterial
     return null
   }
 }

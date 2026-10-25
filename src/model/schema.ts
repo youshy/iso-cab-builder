@@ -170,6 +170,8 @@ export const DesignSchema = z.object({
   id: z.string(),
   name: z.string(),
   cabs: z.array(CabSchema).min(1),
+  /** Turn of the cab in the box about the vertical axis, degrees; 0 faces +z, positive turns toward +x. */
+  cabYaw: z.number().min(0).max(360).default(0),
   dims: DimensionsSchema,
   wallDefault: StackSchema,
   wallOverrides: z.record(WallIdSchema, StackSchema),

@@ -36,7 +36,7 @@ describe('buildScene', () => {
   it('default design: layers for every wall and one cab', () => {
     const s = buildScene(base())
     expect(s.solids.filter((x) => x.kind === 'layer').length).toBeGreaterThanOrEqual(10)
-    expect(s.solids.filter((x) => x.kind === 'cab')).toHaveLength(1)
+    expect(s.solids.filter((x) => x.name === 'cab')).toHaveLength(1)
     expect(s.solids.every((x) => x.indices.length === 36 && x.vertices.length === 24)).toBe(true)
   })
 
@@ -388,5 +388,37 @@ describe('buildScene', () => {
       d.door.outer.framed = true
       expect(doorSolids(d).filter((x) => x.name.startsWith('door-outer-frame'))).toHaveLength(4)
     })
+  })
+})
+
+describe('rotated cab', () => {
+  const cabSolid = (d: Design) => buildScene(d).solids.find((x) => x.name === 'cab')!
+  it('yaw 0 is the axis-aligned box; 45 degrees turns it and stays inside the cavity', () => {
+    const d = base()
+    const flat = cabSolid(d)
+    const xs0 = new Set(flat.vertices.filter((_, i) => i % 3 === 0).map((v) => Math.round(v * 100)))
+    expect(xs0.size).toBe(2)
+    d.cabYaw = 45
+    const s = cabSolid(d)
+    const { inner } = resolveDims(d)
+    const xs = new Set(s.vertices.filter((_, i) => i % 3 === 0).map((v) => Math.round(v * 100)))
+    expect(xs.size).toBeGreaterThan(2)
+    for (let i = 0; i < s.vertices.length; i += 3) {
+      expect(s.vertices[i]).toBeGreaterThanOrEqual(-1e-6)
+      expect(s.vertices[i]).toBeLessThanOrEqual(inner.x + 1e-6)
+      expect(s.vertices[i + 2]).toBeGreaterThanOrEqual(-1e-6)
+      expect(s.vertices[i + 2]).toBeLessThanOrEqual(inner.z + 1e-6)
+    }
+    expect(s.indices).toHaveLength(36)
+  })
+  it('adds a cab-front marker on the front face', () => {
+    const d = base()
+    d.cabYaw = 90
+    const f = buildScene(d).solids.find((x) => x.name === 'cab-front')!
+    expect(f.kind).toBe('cab')
+    // marker lies at the +x side (facing +x) of the cab centre
+    const cx = (cabSolid(d).vertices.filter((_, i) => i % 3 === 0).reduce((a, b) => a + b, 0)) / 8
+    const fx = f.vertices.filter((_, i) => i % 3 === 0).reduce((a, b) => a + b, 0) / (f.vertices.length / 3)
+    expect(fx).toBeGreaterThan(cx)
   })
 })

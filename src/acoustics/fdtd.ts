@@ -11,7 +11,7 @@
  * Pure TS, no DOM: runs in a worker.
  */
 import { resolveDims } from '../geometry/dimensions'
-import { airTest, cabBox, materialTest } from '../geometry/space'
+import { airTest, cabBox, materialTest, speakerPositions } from '../geometry/space'
 import type { Axis, Design, Library, Material, Vec3 } from '../model/schema'
 import { rectModes } from './analytic'
 import { findPeaks, spectrum } from './spectrum'
@@ -110,6 +110,18 @@ function simAir(d: Design): (p: Vec3) => boolean {
   return (p) =>
     noCab(p) &&
     !(p.x >= b.min.x && p.x <= b.max.x && p.y >= b.min.y && p.y <= b.max.y && p.z <= b.max.z && p.z >= b.max.z - BAFFLE)
+}
+
+/** Where the sources go: half a cell in front of each speaker, along its facing, capped at the far walls. */
+export function sourcePoints(d: Design, dx: number): Vec3[] {
+  const { inner } = resolveDims(d)
+  const cab = d.sim.cabId === '' ? undefined : d.cabs.find((c) => c.id === d.sim.cabId)
+  if (!cab) return []
+  return speakerPositions(d, cab).map(({ p, facing }) => ({
+    x: Math.min(inner.x, p.x + (facing.x * dx) / 2),
+    y: Math.min(inner.y, p.y),
+    z: Math.min(inner.z, p.z + (facing.z * dx) / 2),
+  }))
 }
 
 function buildGrid(d: Design, lib: Library, fMax: number, bands: number[]): Grid {
@@ -338,8 +350,7 @@ function setup(d: Design, lib: Library, opts: SimOptions): Setup {
   const cab = d.sim.cabId === '' ? undefined : d.cabs.find((c) => c.id === d.sim.cabId)
   let srcCells: number[]
   if (cab && cab.speakers.length > 0) {
-    const b = cabBox(d, cab)
-    srcCells = cab.speakers.map((s) => nearestAir({ x: b.min.x + s.x, y: b.min.y + s.y, z: Math.min(inner.z, b.max.z + dx / 2) }))
+    srcCells = sourcePoints(d, dx).map(nearestAir)
   } else {
     srcCells = [nearestAir({ x: 0, y: 0, z: 0 })] // no cab: one source near the back-bottom-left corner
   }

@@ -101,6 +101,7 @@ export function defaultDesign(): Design {
     id: newId(),
     name: 'New design',
     cabs: [cab],
+    cabYaw: 0,
     dims: {
       mode: 'inside',
       innerSource: 'cab',
@@ -149,3 +150,9 @@ export function materialOrFirst(lib: Library, preferredId: string, kinds: Materi
 export const DECOUPLING_STRIP_MATERIAL = 'rubber'
 export const PACKER_WIDTH = 40
 export const CLIP_GRID = 400
+
+/** Flow resistivity (Pa s/m2) of porous treatments for the Delany-Bazley absorber term; others use the default. */
+export const FLOW_RESISTIVITY: Record<string, number> = { rockwool: 20000, foam: 10000 }
+export const DEFAULT_FLOW_RESISTIVITY = 15000
+/** Most a single absorber layer may add to a stack's TL, dB. */
+export const ABSORBER_TL_CAP = 15

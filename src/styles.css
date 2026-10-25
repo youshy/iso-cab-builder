@@ -97,6 +97,7 @@ td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
 .section .sv-treat-hatch{stroke:var(--ink-3);stroke-width:1.5}
 .legend .sw-treat{display:inline-block;width:14px;height:14px;border:1px solid var(--ink-2);vertical-align:middle;margin-right:6px;background:repeating-linear-gradient(-45deg,var(--ink-3) 0 1px,var(--bg) 1px 4px)}
 .section .sv-panel{fill:var(--line-strong);stroke:var(--ink-2);vector-effect:non-scaling-stroke}
+.section .sv-speaker{fill:var(--ink);stroke:none}
 .section .sv-cab{fill:none;stroke:var(--ink);stroke-width:1.5;stroke-dasharray:6 4;vector-effect:non-scaling-stroke}
 .section .sv-compare{fill:none;stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:6 4;vector-effect:non-scaling-stroke}
 .section .sv-door line,.section .sv-door rect{stroke:var(--ink);stroke-width:4;stroke-dasharray:2 3;vector-effect:non-scaling-stroke}

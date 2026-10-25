@@ -46,7 +46,7 @@ export function simKey(d: Design, lib: Library, opts: SimOptions): string {
     walls,
     panels: d.panels,
     treatments,
-    cab: cab && { id: cab.id, w: cab.w, h: cab.h, d: cab.d, back: cab.back, cabYaw: (cab as { cabYaw?: number }).cabYaw },
+    cab: cab && { id: cab.id, w: cab.w, h: cab.h, d: cab.d, back: cab.back, cabYaw: d.cabYaw },
     door: { kind: d.door.kind, wall: door },
     absorption,
     probes: d.sim.probes,

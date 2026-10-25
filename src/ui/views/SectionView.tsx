@@ -1,7 +1,7 @@
 import { boxBounds, panelPieces, wallBoxes } from '../../geometry/boxes'
 import { resolveDims } from '../../geometry/dimensions'
 import { facetOffsetAt } from '../../geometry/facets'
-import { cabBox } from '../../geometry/space'
+import { cabAxes, cabBox, cabPose, speakerPositions } from '../../geometry/space'
 import { panelExtent, panelTreatments, wallTreatments } from '../../geometry/treatments'
 import { activeInterior, stackThickness, wallNormal, wallStack, WALLS } from '../../geometry/walls'
 import { SPLIT_GAP, type DoorLayout, type LeafLayout, type WallDoorLayout } from '../../doors/doors'
@@ -275,6 +275,25 @@ export function SectionView({ design: d, lib, view, highlight, compare, exaggera
   const sizing = d.cabs.find((c) => c.id === d.dims.sizingCabId) ?? d.cabs[0]
   const cb = cabBox(d, sizing)
   const cabRect = rect(cb.min[ha], cb.max[ha], cb.min[va], cb.max[va])
+  // The plan shows the cab as turned; front and side views show its bounding extent. Speakers sit on the front edge.
+  const cabEls: preact.JSX.Element[] = []
+  if (view === 'plan') {
+    const { centre, yaw } = cabPose(d, sizing)
+    const { facing, right } = cabAxes(yaw)
+    const corners = ([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(([a, b]) =>
+      pt(
+        centre.x + a * (sizing.w / 2) * right.x + b * (sizing.d / 2) * facing.x,
+        centre.z + a * (sizing.w / 2) * right.z + b * (sizing.d / 2) * facing.z,
+      ).join(','),
+    )
+    cabEls.push(<polygon key="cab" points={corners.join(' ')} class="sv-cab"><title>Cab</title></polygon>)
+    speakerPositions(d, sizing).forEach(({ p }, i) => {
+      const [cx, cy] = pt(p.x, p.z)
+      cabEls.push(<circle key={`sp${i}`} cx={cx} cy={cy} r={pad * 0.2} class="sv-speaker"><title>{`Speaker ${i + 1}`}</title></circle>)
+    })
+  } else {
+    cabEls.push(<rect key="cab" {...cabRect} class="sv-cab" />)
+  }
 
   // Door marker.
   const dw = doorWall(d)
@@ -323,7 +342,7 @@ export function SectionView({ design: d, lib, view, highlight, compare, exaggera
       {facetEls}
       {panelEls}
       {treatEls}
-      <rect {...cabRect} class="sv-cab" />
+      {cabEls}
       {cmp && <rect {...cmp} class="sv-compare" />}
       {door}
       {leafEls}

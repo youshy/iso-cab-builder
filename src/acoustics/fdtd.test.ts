@@ -4,7 +4,8 @@ import type { Design, Library, WallInterior } from '../model/schema'
 import { resolveDims } from '../geometry/dimensions'
 import { rectModes } from './analytic'
 import { findPeaks } from './spectrum'
-import { admittance, diverged, simulate, simulateTuned, type SimMode, type SimResult } from './fdtd'
+import { admittance, diverged, simulate, simulateTuned, sourcePoints, type SimMode, type SimResult } from './fdtd'
+import { speakerPositions } from '../geometry/space'
 
 const C = 343
 const dxAt = (fMax: number) => C / (10 * fMax) * 1000 // mm
@@ -205,5 +206,22 @@ describe('simulate (FDTD)', { timeout: 60_000 }, () => {
     const open = simulate(d, defaultLibrary(), { fMax: 1000 })
     const diff = Math.max(...closed.avgDb.map((v, i) => Math.abs(v - open.avgDb[i])))
     expect(diff).toBeGreaterThan(3)
+  })
+})
+
+describe('sourcePoints', () => {
+  it('sit half a cell in front of each speaker, along its facing', () => {
+    const d = structuredClone(defaultDesign())
+    for (const yaw of [0, 30, 90]) {
+      d.cabYaw = yaw
+      const sp = speakerPositions(d, d.cabs[0])
+      const pts = sourcePoints(d, 10)
+      expect(pts).toHaveLength(sp.length)
+      sp.forEach((s, i) => {
+        expect(pts[i].x).toBeCloseTo(s.p.x + s.facing.x * 5, 6)
+        expect(pts[i].z).toBeCloseTo(s.p.z + s.facing.z * 5, 6)
+        expect(pts[i].y).toBeCloseTo(s.p.y, 6)
+      })
+    }
   })
 })

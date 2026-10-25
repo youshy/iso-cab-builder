@@ -113,3 +113,14 @@ describe('import-boundary ranges', () => {
     expect(DesignSchema.safeParse({ ...d, wallDefault: [{ ...gap, width: 0 }] }).success).toBe(false)
   })
 })
+
+describe('cabYaw', () => {
+  it('defaults to 0 for older designs and is limited to 0..360', () => {
+    const { cabYaw: _omit, ...old } = defaultDesign()
+    const parsed = DesignSchema.parse(old)
+    expect(parsed.cabYaw).toBe(0)
+    expect(DesignSchema.safeParse({ ...old, cabYaw: 30.5 }).success).toBe(true)
+    expect(DesignSchema.safeParse({ ...old, cabYaw: -1 }).success).toBe(false)
+    expect(DesignSchema.safeParse({ ...old, cabYaw: 361 }).success).toBe(false)
+  })
+})

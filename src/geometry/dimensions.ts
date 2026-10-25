@@ -9,6 +9,13 @@ const PAIRS: [keyof Vec3, WallId, WallId][] = [
   ['z', 'back', 'front'],
 ]
 
+/** Axis-aligned x/z extents of a w by d cab turned by yaw degrees about the vertical axis. */
+export function cabFootprint(cab: { w: number; d: number }, yaw: number): { w: number; d: number } {
+  const r = (yaw * Math.PI) / 180
+  const c = Math.abs(Math.cos(r)), s = Math.abs(Math.sin(r))
+  return { w: cab.w * c + cab.d * s, d: cab.w * s + cab.d * c }
+}
+
 export function resolveDims(d: Design): { inner: Vec3; outer: Vec3; free: Vec3; grownBy: Vec3 } {
   const inner: Vec3 = { x: 0, y: 0, z: 0 }
   const outer: Vec3 = { x: 0, y: 0, z: 0 }
@@ -18,7 +25,8 @@ export function resolveDims(d: Design): { inner: Vec3; outer: Vec3; free: Vec3; 
     d.dims.mode === 'inside' && d.dims.innerSource === 'cab'
       ? (d.cabs.find((c) => c.id === d.dims.sizingCabId) ?? d.cabs[0])
       : null
-  const cabSize: Vec3 | null = cab ? { x: cab.w, y: cab.h, z: cab.d } : null
+  const fp = cab ? cabFootprint(cab, d.cabYaw) : null
+  const cabSize: Vec3 | null = cab && fp ? { x: fp.w, y: cab.h, z: fp.d } : null
 
   for (const [axis, a, b] of PAIRS) {
     const stacks = stackThickness(wallStack(d, a)) + stackThickness(wallStack(d, b))

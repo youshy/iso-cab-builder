@@ -4,7 +4,7 @@ import { around, boxBounds, boxPart, facetSpan, panelPieces, wallBoxes, wallSpan
 import { resolveDims } from './dimensions'
 import { packingDepth } from './facets'
 import { clampTo, panelPlane } from './panels'
-import { cabBox } from './space'
+import { cabAxes, cabPose } from './space'
 import { panelExtent, panelTreatments, wallTreatments } from './treatments'
 import { activeInterior, stackThickness, wallNormal, wallPlaneAxes, wallStack, WALLS } from './walls'
 
@@ -21,6 +21,8 @@ export type Solid = {
   indices: number[]
 }
 
+/** Thickness of the marker plate on the front of a turned cab, mm. */
+const FRONT_MARK = 6
 const AXES: Axis[] = ['x', 'y', 'z']
 const HIGH: WallId[] = ['right', 'top', 'front']
 
@@ -191,9 +193,28 @@ export function buildScene(d: Design, lib: Library): { solids: Solid[] } {
 
   const cab = d.sim.cabId === '' ? undefined : d.cabs.find((c) => c.id === d.sim.cabId)
   if (cab) {
-    const b = cabBox(d, cab)
     // A cab that does not fit is shown cut off at the cavity rather than through the walls.
-    putClipped('cab', 'cab', { x: [b.min.x, b.max.x], y: [b.min.y, b.max.y], z: [b.min.z, b.max.z] })
+    const { centre, yaw } = cabPose(d, cab)
+    const { facing, right } = cabAxes(yaw)
+    // Corners in the local frame (right, facing), placed in the domain and kept inside the cavity.
+    const orient = (name: string, lx: Range, lz: Range, y: Range): Solid => {
+      const quad: [number, number][] = [[lx[0], y[0]], [lx[1], y[0]], [lx[1], y[1]], [lx[0], y[1]]]
+      const vertices: number[] = []
+      for (const z of lz) {
+        for (const [x, yy] of quad) {
+          vertices.push(
+            clampTo(centre.x + x * right.x + z * facing.x, inner.x),
+            clampTo(yy, inner.y),
+            clampTo(centre.z + x * right.z + z * facing.z, inner.z),
+          )
+        }
+      }
+      return { name, kind: 'cab', vertices, indices: [...BOX_INDICES] }
+    }
+    const [hw, hd, y0] = [cab.w / 2, cab.d / 2, centre.y - cab.h / 2]
+    solids.push(orient('cab', [-hw, hw], [-hd, hd], [y0, y0 + cab.h]))
+    // A thin plate just outside the front baffle shows which way the speakers point.
+    solids.push(orient('cab-front', [-hw, hw], [hd, hd + FRONT_MARK], [y0, y0 + cab.h]))
   }
   return { solids }
 }

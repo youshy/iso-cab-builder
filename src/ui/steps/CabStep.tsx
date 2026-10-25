@@ -1,5 +1,5 @@
 import { signal } from '@preact/signals'
-import { resolveDims } from '../../geometry/dimensions'
+import { cabFootprint, resolveDims } from '../../geometry/dimensions'
 import { cabFit } from '../../geometry/space'
 import { newCab } from '../../model/defaults'
 import { applyCabEdit, matchPreset, presetSpeakers, SPEAKER_PRESETS } from '../../model/presets'
@@ -128,6 +128,35 @@ function CabCard({ cab, fits, many }: { cab: Cab; fits: boolean; many: boolean }
   )
 }
 
+function Orientation({ d }: { d: Design }) {
+  const sizing = d.cabs.find((c) => c.id === d.dims.sizingCabId) ?? d.cabs[0]
+  const fp = cabFootprint(sizing, d.cabYaw)
+  const fit = cabFit(d).find((f) => f.cabId === sizing.id)
+  const setYaw = (v: number) => update((x) => void (x.cabYaw = Math.min(360, Math.max(0, Math.round(v * 10) / 10))))
+  return (
+    <>
+      <div class="row">
+        <label class="rl" for="cab-yaw">Rotation</label>
+        <input
+          id="cab-yaw"
+          type="range"
+          min={0}
+          max={360}
+          step={0.5}
+          value={d.cabYaw}
+          aria-label="Cab rotation"
+          onInput={(e) => setYaw(Number((e.target as HTMLInputElement).value))}
+        />
+        <NumberField ariaLabel="Cab rotation degrees" kind="plain" suffix="°" min={0} max={360} width={52} value={d.cabYaw} onCommit={setYaw} />
+      </div>
+      <p class="hint">
+        Speakers face the front at 0°. Footprint {fmtLen(fp.w)} wide, {fmtLen(fp.d)} deep.{' '}
+        {fit?.fits ? 'It fits.' : `Does not fit: short by ${shortText(fit?.shortBy ?? { x: 0, y: 0, z: 0 })}.`}
+      </p>
+    </>
+  )
+}
+
 function SizeTable({ d }: { d: Design }) {
   const r = resolveDims(d)
   const innerEditable = d.dims.mode === 'inside' && d.dims.innerSource === 'manual'
@@ -182,6 +211,9 @@ export function CabStep() {
         >
           + Add cab
         </button>
+
+        <h3>Orientation</h3>
+        <Orientation d={d} />
 
         <h3>Box size</h3>
         <div class="row">

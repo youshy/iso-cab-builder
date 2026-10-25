@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { defaultDesign } from '../model/defaults'
 import type { Design, WallInterior } from '../model/schema'
 import { autoDoorSide, doorWall } from '../doors/side'
-import { resolveDims } from './dimensions'
+import { cabFootprint, resolveDims } from './dimensions'
 import { cavities, leafGroups, splitStack, stackThickness } from './walls'
 import type { Gap, Layer } from '../model/schema'
 
@@ -121,5 +121,28 @@ describe('leafGroups and cavities', () => {
     expect(r.middle).toEqual([[L('mdf', 18), L('mdf', 12)]])
     expect(splitStack([L('a', 1)])).toEqual({ shell: [L('a', 1)], gap: null, liner: [], middle: [] })
     expect(splitStack([L('a', 1), G(5), L('b', 2)]).middle).toEqual([])
+  })
+})
+
+describe('cab rotation sizing', () => {
+  it('footprint swaps at 90 degrees and is the diagonal extent at 45', () => {
+    const cab = { w: 1350, d: 360 }
+    expect(cabFootprint(cab, 0)).toEqual({ w: 1350, d: 360 })
+    const q = cabFootprint(cab, 90)
+    expect(q.w).toBeCloseTo(360, 6)
+    expect(q.d).toBeCloseTo(1350, 6)
+    const e = cabFootprint(cab, 45)
+    expect(e.w).toBeCloseTo(1209.2, 1)
+    expect(e.d).toBeCloseTo(1209.2, 1)
+  })
+  it('inside/cab sizing follows the rotated footprint and the cab height', () => {
+    const d = base()
+    d.cabYaw = 90
+    const r = resolveDims(d)
+    expect(r.inner.x).toBeCloseTo(360 + 40, 1)
+    expect(r.inner.z).toBeCloseTo(1350 + 40, 1)
+    expect(r.inner.y).toBe(base().dims.inner.y)
+    d.cabYaw = 45
+    expect(resolveDims(d).inner.x).toBeCloseTo(1209.2 + 40, 1)
   })
 })
