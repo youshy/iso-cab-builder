@@ -81,9 +81,9 @@ export function createAppStore(backend: Backend) {
 
   const latest = (p: Project) => p.versions[p.versions.length - 1]
   const currentProject = computed(() => projects.value.find((p) => p.id === projectId.value) ?? projects.value[0])
-  const design = signal<Design>(structuredClone(latest(loaded[0]).design))
-  /** Version number the working copy autosaves into. */
-  const editingVersion = signal<number>(latest(loaded[0]).version)
+  const design = signal<Design>(structuredClone(loaded[0].working ?? latest(loaded[0]).design))
+  /** Saved version the working copy was started from, or null when unknown. */
+  const basedOn = signal<number | null>(loaded[0].working ? null : latest(loaded[0]).version)
 
   const compareDesign = computed<Design | null>(() => {
     const n = compareVersion.value
@@ -107,17 +107,18 @@ export function createAppStore(backend: Backend) {
     }
     design.value = next
     const p = currentProject.value
-    persist({
-      ...p,
-      versions: p.versions.map((v) => (v.version === editingVersion.value ? { ...v, design: structuredClone(next) } : v)),
-    })
+    persist({ ...p, working: structuredClone(next) })
   }
 
   function saveVersion(): number {
     const p = currentProject.value
     const n = Math.max(0, ...p.versions.map((v) => v.version)) + 1
-    persist({ ...p, versions: [...p.versions, { version: n, savedAt: new Date().toISOString(), design: structuredClone(design.value) }] })
-    editingVersion.value = n
+    persist({
+      ...p,
+      versions: [...p.versions, { version: n, savedAt: new Date().toISOString(), design: structuredClone(design.value) }],
+      working: structuredClone(design.value),
+    })
+    basedOn.value = n
     return n
   }
 
@@ -125,7 +126,8 @@ export function createAppStore(backend: Backend) {
     const v = currentProject.value.versions.find((x) => x.version === n)
     if (!v) return
     design.value = structuredClone(v.design)
-    editingVersion.value = n
+    basedOn.value = n
+    persist({ ...currentProject.value, working: structuredClone(v.design) })
   }
 
   function selectProject(id: string): void {
@@ -133,8 +135,8 @@ export function createAppStore(backend: Backend) {
     if (!p) return
     projectId.value = id
     compareVersion.value = null
-    design.value = structuredClone(latest(p).design)
-    editingVersion.value = latest(p).version
+    design.value = structuredClone(p.working ?? latest(p).design)
+    basedOn.value = p.working ? null : latest(p).version
   }
 
   function addProject(p: Project): void {
@@ -159,7 +161,7 @@ export function createAppStore(backend: Backend) {
 
   return {
     library, shop, projects, projectId, design, compareVersion, units, saveWarning,
-    editingVersion, currentProject, compareDesign,
+    basedOn, currentProject, compareDesign,
     update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary,
     fmtLen: (mm: number) => formatLength(mm, units.value),
     fmtNum: (mm: number) => formatNumber(mm, units.value),
@@ -170,7 +172,7 @@ export function createAppStore(backend: Backend) {
 export const app = createAppStore(bootBackend())
 export const {
   library, shop, projects, projectId, design, compareVersion, units, saveWarning,
-  editingVersion, currentProject, compareDesign,
+  basedOn, currentProject, compareDesign,
   update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary,
   fmtLen, fmtNum, parseLen,
 } = app

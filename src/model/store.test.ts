@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { createAppStore, formatLength, parseLength, setDimMode, setInnerSource } from './store'
 import { defaultDesign } from './defaults'
 import { resolveDims } from '../geometry/dimensions'
-import { SPEAKER_PRESETS, matchPreset, presetSpeakers } from './presets'
+import { SPEAKER_PRESETS, applyCabEdit, matchPreset, presetSpeakers } from './presets'
 
 function memoryBackend() {
   const m = new Map<string, string>()
@@ -90,6 +90,53 @@ describe('store', () => {
     expect(parseLength('abc', 'mm')).toBeNull()
     expect(parseLength('1,5 in', 'mm')).toBe(1.5)
     expect(formatLength(1350.4, 'mm')).toBe('1350 mm')
+  })
+})
+
+describe('saved versions are immutable', () => {
+  it('editing after loading v1 leaves v1 unchanged and Compare lists saved versions', () => {
+    const s = createAppStore(memoryBackend())
+    const original = structuredClone(s.design.value)
+    s.saveVersion()
+    s.loadVersion(1)
+    expect(s.basedOn.value).toBe(1)
+    s.update((d) => {
+      d.cabs[0].name = 'Edited'
+    })
+    s.compareVersion.value = 1
+    expect(s.compareDesign.value).toEqual(original)
+    expect(s.currentProject.value.versions.map((v) => v.version)).toEqual([1, 2])
+    expect(s.design.value.cabs[0].name).toBe('Edited')
+  })
+
+  it('saveVersion snapshots the working design and survives reload', () => {
+    const backend = memoryBackend()
+    const s = createAppStore(backend)
+    s.update((d) => {
+      d.cabs[0].name = 'Snap'
+    })
+    const n = s.saveVersion()
+    s.update((d) => {
+      d.cabs[0].name = 'After'
+    })
+    expect(s.currentProject.value.versions.find((v) => v.version === n)?.design.cabs[0].name).toBe('Snap')
+    expect(createAppStore(backend).design.value.cabs[0].name).toBe('After')
+  })
+})
+
+describe('applyCabEdit', () => {
+  it('selecting a new preset on a preset cab applies it', () => {
+    const cab = defaultDesign().cabs[0]
+    const p = SPEAKER_PRESETS.find((x) => x.id === '2x12')!
+    applyCabEdit(cab, (c) => (c.speakers = presetSpeakers(p, c)))
+    expect(cab.speakers).toHaveLength(2)
+    expect(matchPreset(cab)?.id).toBe('2x12')
+  })
+  it('resizing a preset cab refits the layout', () => {
+    const cab = defaultDesign().cabs[0]
+    applyCabEdit(cab, (c) => (c.w = 900))
+    expect(matchPreset(cab)?.id).toBe('6x12')
+    expect(cab.speakers[2].x).toBe(750)
   })
 })
 

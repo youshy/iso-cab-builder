@@ -238,6 +238,8 @@ export const ProjectSchema = z.object({
   id: z.string(),
   name: z.string(),
   versions: z.array(VersionSchema),
+  /** Autosaved working copy. Saved versions are never changed by editing. */
+  working: DesignSchema.optional(),
 })
 export type Project = z.infer<typeof ProjectSchema>
 

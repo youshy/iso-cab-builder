@@ -1,7 +1,7 @@
 import { resolveDims } from '../../geometry/dimensions'
 import { cabFit } from '../../geometry/space'
 import { newCab } from '../../model/defaults'
-import { matchPreset, presetSpeakers, SPEAKER_PRESETS } from '../../model/presets'
+import { applyCabEdit, matchPreset, presetSpeakers, SPEAKER_PRESETS } from '../../model/presets'
 import type { Cab, Design, Vec3 } from '../../model/schema'
 import { compareDesign, design, fmtLen, setDimMode, setInnerSource, update } from '../../model/store'
 import { NumberField } from '../NumberField'
@@ -18,9 +18,7 @@ function editCab(id: string, fn: (c: Cab) => void) {
   update((d) => {
     const c = d.cabs.find((x) => x.id === id)
     if (!c) return
-    const preset = matchPreset(c)
-    fn(c)
-    if (preset) c.speakers = presetSpeakers(preset, c)
+    applyCabEdit(c, fn)
   })
 }
 
@@ -87,10 +85,10 @@ function CabCard({ cab, fits, many }: { cab: Cab; fits: boolean; many: boolean }
               <tr key={i}>
                 <td class="num">{i + 1}</td>
                 <td>
-                  <NumberField value={s.x} min={-1e9} onCommit={(v) => update((d) => void (d.cabs.find((c) => c.id === cab.id)!.speakers[i].x = v))} />
+                  <NumberField value={s.x} min={-1e9} allowZero onCommit={(v) => update((d) => void (d.cabs.find((c) => c.id === cab.id)!.speakers[i].x = v))} />
                 </td>
                 <td>
-                  <NumberField value={s.y} min={-1e9} onCommit={(v) => update((d) => void (d.cabs.find((c) => c.id === cab.id)!.speakers[i].y = v))} />
+                  <NumberField value={s.y} min={-1e9} allowZero onCommit={(v) => update((d) => void (d.cabs.find((c) => c.id === cab.id)!.speakers[i].y = v))} />
                 </td>
                 <td>
                   <button type="button" class="btn" aria-label={`Remove speaker ${i + 1}`} onClick={() => update((d) => void d.cabs.find((c) => c.id === cab.id)!.speakers.splice(i, 1))}>
@@ -231,7 +229,7 @@ export function CabStep() {
         )}
         <div class="row">
           <span class="rl">Clearance</span>
-          <NumberField ariaLabel="Clearance" value={dims.clearance} min={0} onCommit={(v) => update((x) => void (x.dims.clearance = v))} />
+          <NumberField ariaLabel="Clearance" value={dims.clearance} allowZero onCommit={(v) => update((x) => void (x.dims.clearance = v))} />
         </div>
         <SizeTable d={d} />
         <p class="hint">

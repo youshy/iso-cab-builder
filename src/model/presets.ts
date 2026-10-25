@@ -31,3 +31,14 @@ export function matchPreset(cab: Pick<Cab, 'w' | 'h' | 'speakers'>): SpeakerPres
   }
   return null
 }
+
+/**
+ * Edit a cab. A speaker layout that matched a preset is re-fitted to the new size,
+ * unless the edit set the speakers itself.
+ */
+export function applyCabEdit(cab: Cab, fn: (c: Cab) => void): void {
+  const preset = matchPreset(cab)
+  const before = cab.speakers
+  fn(cab)
+  if (preset && cab.speakers === before) cab.speakers = presetSpeakers(preset, cab)
+}

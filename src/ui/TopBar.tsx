@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks'
 import {
-  addProject, compareVersion, currentProject, editingVersion, library, loadVersion, newProject, projectId,
+  addProject, compareVersion, currentProject, basedOn, library, loadVersion, newProject, projectId,
   projects, saveVersion, saveWarning, selectProject, setLibrary, units,
 } from '../model/store'
 import { exportProject, importProject } from '../storage/io'
@@ -52,13 +52,15 @@ export function TopBar() {
         <select
           class="num"
           aria-label="Version"
-          value={String(editingVersion.value)}
-          onChange={(e) => loadVersion(Number((e.target as HTMLSelectElement).value))}
+          value="working"
+          onChange={(e) => {
+            const v = (e.target as HTMLSelectElement).value
+            if (v !== 'working') loadVersion(Number(v))
+          }}
         >
+          <option value="working">{basedOn.value === null ? 'Editing' : `Editing (from v${basedOn.value})`}</option>
           {versions.map((v) => (
-            <option key={v.version} value={String(v.version)}>
-              v{v.version}{v.version === editingVersion.value ? ' (editing)' : ''}
-            </option>
+            <option key={v.version} value={String(v.version)}>Load v{v.version}</option>
           ))}
         </select>
       </div>

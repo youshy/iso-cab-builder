@@ -23,6 +23,7 @@ function designMaterialIds(d: Design, out: Set<string>) {
 function projectMaterialIds(p: Project): Set<string> {
   const ids = new Set<string>()
   for (const v of p.versions) designMaterialIds(v.design, ids)
+  if (p.working) designMaterialIds(p.working, ids)
   return ids
 }
 
