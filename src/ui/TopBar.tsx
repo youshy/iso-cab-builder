@@ -1,11 +1,12 @@
 import { computed } from '@preact/signals'
-import { useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import {
   addProject, compareDesign, compareVersion, currentProject, basedOn, design, library, loadVersion, newProject, projectId,
   projects, saveVersion, saveWarning, selectProject, setLibrary, shop, units,
 } from '../model/store'
 import { buildWeight } from '../cutlist/weight'
 import { libraryOpen } from './library/MaterialLibrary'
+import { openShop, shopOpen } from './library/ShopSettings'
 import { exportProject, importProject } from '../storage/io'
 
 function download(name: string, text: string) {
@@ -27,6 +28,21 @@ const weightDelta = computed(() => {
 
 export function TopBar() {
   const [importError, setImportError] = useState<string | null>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!moreOpen) return
+    const away = (e: Event) => {
+      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false)
+    }
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setMoreOpen(false)
+    document.addEventListener('pointerdown', away)
+    document.addEventListener('keydown', esc)
+    return () => {
+      document.removeEventListener('pointerdown', away)
+      document.removeEventListener('keydown', esc)
+    }
+  }, [moreOpen])
   const project = currentProject.value
   const versions = [...project.versions].sort((a, b) => b.version - a.version)
   const nextVersion = Math.max(...project.versions.map((v) => v.version)) + 1
@@ -60,7 +76,6 @@ export function TopBar() {
           ))}
         </select>
       </div>
-      <button type="button" class="btn" onClick={newProject}>New design</button>
       <div class="ctl">
         Version
         <select
@@ -81,9 +96,6 @@ export function TopBar() {
       <button type="button" class="btn" onClick={() => saveVersion()}>Save as v{nextVersion}</button>
       {saveWarning.value && <span class="err">{saveWarning.value}</span>}
       {importError && <span class="err" role="alert">{importError}</span>}
-      <button type="button" class="btn" aria-pressed={libraryOpen.value} onClick={() => (libraryOpen.value = !libraryOpen.value)}>
-        Materials
-      </button>
       <span class="num" title="Estimated build weight (excluding cab)">
         ≈ {kg} kg
         {delta !== null && ` (Δ ${delta > 0 ? '+' : delta < 0 ? '−' : ''}${Math.abs(delta)} kg vs v${compareVersion.value})`}
@@ -112,13 +124,27 @@ export function TopBar() {
           <option value="in">in</option>
         </select>
       </div>
-      <button type="button" class="btn" onClick={() => download(`${project.name}.isocab.json`, exportProject(project, library.value))}>
-        Export
-      </button>
-      <label class="btn">
-        Import
-        <input type="file" accept=".json,application/json" hidden onChange={onImport} />
-      </label>
+      <div class="more" ref={moreRef}>
+        <button type="button" class="btn" aria-haspopup="menu" aria-expanded={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
+          More ▾
+        </button>
+        <div class={`menu ${moreOpen ? 'open' : ''}`} role="menu">
+          <button type="button" role="menuitem" onClick={() => { newProject(); setMoreOpen(false) }}>New design</button>
+          <button type="button" role="menuitem" aria-pressed={libraryOpen.value} onClick={() => { libraryOpen.value = !libraryOpen.value; setMoreOpen(false) }}>
+            Materials
+          </button>
+          <button type="button" role="menuitem" aria-pressed={shopOpen.value} onClick={() => { shopOpen.value ? (shopOpen.value = false) : openShop(); setMoreOpen(false) }}>
+            Shop settings
+          </button>
+          <button type="button" role="menuitem" onClick={() => { download(`${project.name}.isocab.json`, exportProject(project, library.value)); setMoreOpen(false) }}>
+            Export design
+          </button>
+          <label role="menuitem">
+            Import design
+            <input type="file" accept=".json,application/json" hidden onChange={(e) => { setMoreOpen(false); onImport(e) }} />
+          </label>
+        </div>
+      </div>
     </header>
   )
 }

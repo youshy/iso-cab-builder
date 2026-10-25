@@ -9,6 +9,9 @@ import { MaterialLibrary, libraryOpen } from './library/MaterialLibrary';
 import { editError } from '../model/store';
 import { ModeStrip } from './ModeStrip';
 import { AcousticsStep } from './steps/AcousticsStep';
+import { CutListStep } from './steps/CutListStep';
+import { ShopSettings, shopOpen } from './library/ShopSettings';
+import { PrintRoot } from './cutlist/PrintRoot';
 
 export function App() {
   const [step, setStep] = useState<StepId>('cab');
@@ -20,8 +23,8 @@ export function App() {
         {editError.value && <div class="editerr" role="alert">{editError.value}</div>}
       </div>
       <StepTabs current={step} onSelect={setStep} />
-      <div class={`main ${libraryOpen.value ? 'lib-open' : ''}`}>
-        {libraryOpen.value && <MaterialLibrary />}
+      <div class={`main ${libraryOpen.value ? 'lib-open' : shopOpen.value ? 'lib-open shop-open' : ''}`}>
+        {libraryOpen.value ? <MaterialLibrary /> : shopOpen.value && <ShopSettings />}
         {step === 'cab' ? (
           <CabStep />
         ) : step === 'walls' ? (
@@ -32,6 +35,8 @@ export function App() {
           <DoorsStep />
         ) : step === 'acoustics' ? (
           <AcousticsStep />
+        ) : step === 'cutlist' ? (
+          <CutListStep />
         ) : (
           <>
             <aside>
@@ -45,6 +50,7 @@ export function App() {
         )}
       </div>
       <ModeStrip onOpenAcoustics={() => setStep('acoustics')} />
+      <PrintRoot />
     </>
   );
 }

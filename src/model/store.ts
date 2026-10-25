@@ -1,5 +1,5 @@
 import { computed, signal } from '@preact/signals'
-import { DesignSchema, LibrarySchema } from './schema'
+import { DesignSchema, LibrarySchema, ShopSchema } from './schema'
 import type { ZodError } from 'zod'
 import type { Design, Library, Project, Shop } from './schema'
 import { defaultDesign, defaultLibrary, defaultShop, newId } from './defaults'
@@ -198,10 +198,25 @@ export function createAppStore(backend: Backend) {
     return true
   }
 
+  /** Edit the shop settings; invalid results are rejected with an edit error. Returns whether it applied. */
+  function updateShop(fn: (s: Shop) => void): boolean {
+    const next = structuredClone(shop.value)
+    fn(next)
+    const parsed = ShopSchema.safeParse(next)
+    if (!parsed.success) {
+      rejectEdit(parsed.error)
+      return false
+    }
+    clearEditError()
+    shop.value = next
+    if (!storage.saveShop(next)) saveWarning.value = 'Not saved: browser storage unavailable'
+    return true
+  }
+
   return {
     library, shop, projects, projectId, design, compareVersion, units, saveWarning, editError,
     simCurrent, simCompare, sliceRequest, basedOn, currentProject, compareDesign,
-    update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary, updateLibrary,
+    update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary, updateLibrary, updateShop,
     fmtLen: (mm: number) => formatLength(mm, units.value),
     fmtNum: (mm: number) => formatNumber(mm, units.value),
     parseLen: (text: string) => parseLength(text, units.value),
@@ -212,6 +227,6 @@ export const app = createAppStore(bootBackend())
 export const {
   library, shop, projects, projectId, design, compareVersion, units, saveWarning, editError,
   simCurrent, simCompare, sliceRequest, basedOn, currentProject, compareDesign,
-  update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary, updateLibrary,
+  update, saveVersion, loadVersion, selectProject, addProject, newProject, setLibrary, updateLibrary, updateShop,
   fmtLen, fmtNum, parseLen,
 } = app

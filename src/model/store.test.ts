@@ -58,6 +58,16 @@ describe('store', () => {
     expect(s.editError.value).toMatch(/materials\.0\.density/)
   })
 
+  it('updateShop validates and persists', () => {
+    const backend = memoryBackend()
+    const s = createAppStore(backend)
+    expect(s.updateShop((x) => void (x.kerf = 5))).toBe(true)
+    expect(createAppStore(backend).shop.value.kerf).toBe(5)
+    expect(s.updateShop((x) => void (x.kerf = -1))).toBe(false)
+    expect(s.shop.value.kerf).toBe(5)
+    expect(s.editError.value).toMatch(/kerf/)
+  })
+
   it('applies a valid update and autosaves it to storage', () => {
     const backend = memoryBackend()
     const s = createAppStore(backend)

@@ -104,7 +104,8 @@ td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
 .section .sv-door rect{stroke-width:1.5;stroke-dasharray:3 3}
 .section .sv-door text{fill:var(--ink-2)}
 
-.top{white-space:nowrap}
+.top{white-space:nowrap;flex-wrap:wrap;gap:8px 12px}
+.top .sp{min-width:0}
 .top .ctl,.top .btn{flex:none}
 .field{white-space:nowrap}
 .row .field{flex:none}
@@ -145,7 +146,8 @@ td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
 .summary.neg{color:var(--warn)}
 .editerr{padding:6px 16px;background:var(--accent-soft);color:var(--warn);font-size:12px;border-bottom:1px solid var(--line)}
 /* material library panel */
-.main.lib-open{grid-template-columns:760px 1fr}
+.main.lib-open{grid-template-columns:minmax(0,760px) minmax(0,1fr)}
+.main.shop-open{grid-template-columns:480px minmax(0,1fr)}
 .main.lib-open>aside:not(.libpanel){display:none}
 .libpanel .cardhead{flex-wrap:wrap}
 .libpanel .grid{display:flex;flex-wrap:wrap;gap:8px 14px;margin:6px 0}
@@ -229,3 +231,61 @@ aside.doorside .collisions p{margin:2px 0}
 .wallsstage .card{min-width:0}
 .c-tip .tl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .stacktable{font-size:12.5px}
+
+/* top bar more menu */
+.more{position:relative}
+.more .menu{display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:170px;background:var(--bg);border:1px solid var(--line-strong);border-radius:6px;padding:4px;box-shadow:0 4px 14px oklch(0.24 0.01 80 / .14);flex-direction:column}
+.more .menu.open{display:flex}
+.more .menu>*{display:block;text-align:left;border:0;background:none;padding:6px 10px;border-radius:4px;cursor:pointer}
+.more .menu>*:hover{background:var(--panel)}
+.more .menu>[aria-pressed=true]{color:var(--accent);font-weight:600}
+/* shop settings */
+.shoptable td{padding:4px}
+.shoptable th:last-child,.shoptable td:last-child{width:1%}
+/* cut list step */
+.cutstage{grid-column:1/-1;grid-template-rows:auto 1fr;min-width:0}
+.main.lib-open .cutstage{grid-column:2}
+.cutstage .viewbar{flex-wrap:wrap;gap:8px 12px}
+.cutbody{overflow:auto;padding:16px 20px;min-height:0;min-width:0}
+.parts{font-size:12.5px;margin-top:0}
+.parts .r{text-align:right}
+.parts tr.grp th{background:var(--panel);color:var(--ink-2);font-size:12px;padding:6px 8px;border-bottom:1px solid var(--line-strong)}
+.parts tfoot td{color:var(--ink-2);padding-top:8px;border-bottom:0}
+.parts td.notes{color:var(--ink-2);max-width:260px}
+.wtotal{margin:4px 0 8px;font-size:14px}
+.wtotal b{font-size:18px}
+.bars{display:grid;gap:4px;max-width:640px}
+.bar{display:grid;grid-template-columns:150px 1fr 70px;gap:8px;align-items:center;font-size:12.5px}
+.bar .bt{background:var(--panel);border-radius:3px;height:10px;display:block}
+.bar .bt i{display:block;height:100%;background:var(--ink-2);border-radius:3px}
+.bar .bv{text-align:right}
+.weightpanel .etable{max-width:640px;margin-top:14px}
+.nestgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:12px}
+.nestgrid figure{margin:0}
+.nestsvg{width:100%;height:auto;display:block;border:1px solid var(--line-strong)}
+.ns-stock{fill:var(--panel)}
+.ns-part{fill:var(--bg);stroke:var(--ink);stroke-width:2;vector-effect:non-scaling-stroke}
+.ns-label{fill:var(--ink);pointer-events:none}
+.sheetprev{display:grid;gap:20px}
+.sheetprev figure{margin:0;max-width:1000px}
+.sheetprev figcaption{font-weight:600;margin-bottom:4px}
+.sheetprev svg{width:100%;height:auto;display:block;border:1px solid var(--line-strong)}
+.printroot{display:none}
+
+@media print{
+  body[data-print] #app{display:block;height:auto;min-width:0}
+  body[data-print] #app>*:not(.printroot){display:none!important}
+  body[data-print] .printroot{display:block}
+  .print-drawings{page:a3sheet}
+  .printsheet{width:420mm;height:297mm;overflow:hidden;break-after:page;page-break-after:always}
+  .printsheet:last-child{break-after:auto;page-break-after:auto}
+  .printsheet svg{display:block;width:420mm;height:297mm}
+  .print-cutlist{page:a4list;padding:0;color:#000;font-size:10pt}
+  .print-cutlist h1{font-size:15pt;margin:0 0 4px}
+  .print-cutlist table{font-size:8.5pt;break-inside:auto}
+  .print-cutlist tr{break-inside:avoid}
+  .print-cutlist .parts tr.grp th{background:#eee;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .print-cutlist .bar .bt i{background:#444;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+@page a3sheet{size:A3 landscape;margin:0}
+@page a4list{size:A4 portrait;margin:12mm}
