@@ -2,12 +2,13 @@ import { resolveDims } from '../geometry/dimensions'
 import { cabBox } from '../geometry/space'
 import { splitStack, stackThickness, wallStack } from '../geometry/walls'
 import type { Cab, Design, DoorLeaf, DoorSide, Layer, Library, WallId } from '../model/schema'
-import { doorWall } from './side'
+import { autoDoorSide, doorWall } from './side'
 
 export type LeafLayout = {
   which: 'outer' | 'inner'
   mount: 'shell' | 'liner' | 'rebate'
   opening: { w: number; h: number } // clear
+  cutout: { w: number; h: number } // wall cutout: clear opening plus frame strips
   leaves: { w: number; h: number; t: number }[] // 1 or 2
   frame: { width: number; depth: number } | null
   hinges: { edge: string; positions: number[] }[]
@@ -84,20 +85,26 @@ function hingeAndLatch(
 }
 
 export function doorLayout(d: Design, lib: Library): DoorLayout {
-  const side = (d.door.side === 'auto' ? doorWall(d) : d.door.side) as DoorSide
+  const w = doorWall(d)
+  const side: DoorSide = w === 'left' || w === 'right' || w === 'front' ? w : autoDoorSide(d)
   const wall: WallId = side
   const { margin, overlap } = d.door
   const cabs = d.cabs
   const face = cabFace(largestCab(d), side)
   const clear = d.door.opening ?? { w: face.w + 2 * margin, h: face.h + 2 * margin }
 
-  const gapOn = splitStack(wallStack(d, wall)).gap !== null
+  const wallSplit = splitStack(wallStack(d, wall))
+  const gapOn = wallSplit.gap !== null
   const layers = doorLeafLayers(d)
   const sealT = (leaf: DoorLeaf) => lib.seals.find((s) => s.id === leaf.sealTypeId)?.thickness ?? 0
   const stackDepth = stackThickness(wallStack(d, wall))
   const innerT = sumT(layers.inner)
   const rebateDepth = innerT + sealT(d.door.inner)
   const betweenDepth = stackDepth - rebateDepth
+
+  const frameDepth = gapOn
+    ? { outer: sumT(wallSplit.shell), inner: sumT(wallSplit.liner) }
+    : { outer: betweenDepth, inner: rebateDepth }
 
   const build = (which: 'outer' | 'inner'): LeafLayout => {
     const cfg = d.door[which]
@@ -113,7 +120,10 @@ export function doorLayout(d: Design, lib: Library): DoorLayout {
       mount: which === 'outer' ? 'shell' : gapOn ? 'liner' : 'rebate',
       opening: { ...clear },
       leaves,
-      frame: cfg.framed ? { width: cfg.frameWidth, depth: t } : null,
+      cutout: cfg.framed
+        ? { w: clear.w + 2 * cfg.frameWidth, h: clear.h + 2 * cfg.frameWidth }
+        : { ...clear },
+      frame: cfg.framed ? { width: cfg.frameWidth, depth: frameDepth[which] } : null,
       ...hw,
       rebate: which === 'inner' ? { depth: rebateDepth, width: overlap } : null,
       direction: cfg.opening === 'in' ? 'in' : 'out',

@@ -1,5 +1,6 @@
 import { SPLIT_GAP, doorLayout, doorLeafLayers } from '../doors/doors'
 import { doorWall } from '../doors/side'
+import { DEFAULT_INSULATION } from '../model/defaults'
 import { resolveDims } from '../geometry/dimensions'
 import { WALLS, splitStack, wallStack } from '../geometry/walls'
 import type { Design, Gap, Layer, Library, StackItem, WallId } from '../model/schema'
@@ -126,7 +127,7 @@ function doorStack(d: Design, betweenDepth: number): StackItem[] {
     width: Math.max(betweenDepth, 1),
     decoupling: 'clips',
     fill: d.door.between === 'air' ? 'empty' : 'insulation',
-    fillMaterialId: 'rockwool',
+    fillMaterialId: DEFAULT_INSULATION.materialId,
   }
   return [...outer, gap, ...inner]
 }

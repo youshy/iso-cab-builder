@@ -26,12 +26,44 @@ describe('doorLayout', () => {
     expect(l.outer.latches).toEqual([100, 960])
   })
 
-  it('framed: cab still passes, frame depth equals the leaf layer thickness', () => {
+  it('framed, gap off: frame lines the reveal; cutout grows by the strips', () => {
     const d = defaultDesign()
     d.door.outer.framed = true
+    d.door.inner.framed = true
     const l = doorLayout(d, lib)
-    expect(l.outer.frame).toEqual({ width: 45, depth: 18 })
+    expect(l.outer.frame).toEqual({ width: 45, depth: 12 }) // betweenDepth = 36 - (18 + 6)
+    expect(l.inner.frame).toEqual({ width: 45, depth: 24 }) // rebate depth
+    expect(l.outer.cutout).toEqual({ w: 480, h: 1100 })
+    expect(l.outer.opening).toEqual({ w: 390, h: 1010 })
     expect(l.cabsThrough.every((c) => c.fits)).toBe(true)
+  })
+
+  it('framed, gap on: frame depth is the shell or liner thickness', () => {
+    const d = defaultDesign()
+    d.wallDefault = gapStack()
+    d.door.outer.framed = true
+    d.door.inner.framed = true
+    const l = doorLayout(d, lib)
+    expect(l.outer.frame?.depth).toBe(18)
+    expect(l.inner.frame?.depth).toBe(18)
+  })
+
+  it('unframed cutout equals the clear opening', () => {
+    expect(doorLayout(defaultDesign(), lib).outer.cutout).toEqual({ w: 390, h: 1010 })
+  })
+
+  it('leaf shorter than 900 gets 2 hinges', () => {
+    const d = defaultDesign()
+    d.door.opening = { w: 390, h: 600 }
+    expect(doorLayout(d, lib).outer.hinges[0].positions).toEqual([150, 650 - 150])
+  })
+
+  it('top hinge edge spaces hinges along the leaf width', () => {
+    const d = defaultDesign()
+    d.door.outer.hingeEdge = 'top'
+    const l = doorLayout(d, lib)
+    expect(l.outer.hinges).toEqual([{ edge: 'top', positions: [150, 290] }])
+    expect(l.outer.swingRadius).toBe(1060)
   })
 
   it('outer leaf opening in with insulation between collides', () => {
