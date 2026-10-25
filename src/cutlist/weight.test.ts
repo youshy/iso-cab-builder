@@ -40,6 +40,7 @@ describe('buildWeight', () => {
 
   it('an MLV layer adds its mass', () => {
     const d = defaultDesign()
+    const before = buildWeight(d, lib, shop).totalKg
     const area = (dd: Design) =>
       buildParts(dd, lib, shop).parts.filter((p) => p.materialId === 'mlv').reduce((a, p) => a + (p.length * p.width * p.qty) / 1e6, 0)
     expect(area(d)).toBe(0)
@@ -47,9 +48,14 @@ describe('buildWeight', () => {
     const a = area(d)
     expect(a).toBeGreaterThan(0)
     // Other layers grow with the new outer size, so compare the MLV line itself.
-    const mlv = buildWeight(d, lib, shop).byMaterial.find((m) => m.materialId === 'mlv')!.kg
+    const after = buildWeight(d, lib, shop)
+    const mlv = after.byMaterial.find((m) => m.materialId === 'mlv')!.kg
     const expected = dens('mlv') * 0.005 * a
     expect(Math.abs(mlv - expected)).toBeLessThan(0.02 * expected)
+    // The total rose by the MLV line plus the small growth of the other layers.
+    const rose = after.totalKg - before
+    expect(rose).toBeGreaterThanOrEqual(mlv - 0.1)
+    expect(rose - mlv).toBeLessThan(0.05 * mlv) // outer layers get bigger boxes (about 3% here)
   })
 
   it('wall door: moving assembly is at least the wall mass', () => {
@@ -60,10 +66,40 @@ describe('buildWeight', () => {
     expect(w.movingAssemblyKg).toBeGreaterThanOrEqual(l.wall!.massKg - 0.1)
   })
 
-  it('dual doors: moving assembly is a part of the total', () => {
-    const w = buildWeight(defaultDesign(), lib, shop)
+  it('dual doors: moving assembly is the heavier leaf group, hinges and latches included', () => {
+    const d = defaultDesign()
+    const w = buildWeight(d, lib, shop)
+    const door = doorLayout(d, lib)
+    const group = (which: 'outer' | 'inner') => {
+      const leaf = door[which]!
+      const cfg = d.door[which]
+      const mass = buildParts(d, lib, shop).parts
+        .filter((p) => p.step === 'doors' && p.name.startsWith(which === 'outer' ? 'Outer door' : 'Inner door') && p.kind !== 'frame')
+        .reduce((a, p) => a + ((p.length * p.width * p.thickness) / 1e9) * dens(p.materialId) * p.qty, 0)
+      const hinges = leaf.hinges.reduce((a, e) => a + e.positions.length, 0) * lib.hinges.find((h) => h.id === cfg.hingeTypeId)!.weightKg
+      const latches = leaf.latches.length * lib.latches.find((l) => l.id === cfg.latchTypeId)!.weightKg
+      return mass + hinges + latches
+    }
+    expect(Math.abs(w.movingAssemblyKg - Math.max(group('outer'), group('inner')))).toBeLessThan(0.06)
     expect(w.movingAssemblyKg).toBeGreaterThan(0)
     expect(w.movingAssemblyKg).toBeLessThan(w.totalKg)
+  })
+
+  it('isolation clips are counted under the box they belong to', () => {
+    const d = defaultDesign()
+    d.wallDefault = [
+      { kind: 'layer', materialId: 'plywood', thickness: 18 },
+      { kind: 'gap', width: 25, decoupling: 'clips', fill: 'empty', fillMaterialId: 'rockwool' },
+      { kind: 'layer', materialId: 'mdf', thickness: 18 },
+    ]
+    const { parts, hardware } = buildParts(d, lib, shop)
+    const clips = hardware.filter((h) => h.name === 'Isolation clip')
+    expect(clips.map((c) => c.step)).toEqual(['liner'])
+    const kg = clips[0].qty * CLIP_WEIGHT_KG
+    const w = buildWeight(d, lib, shop)
+    const partsOf = (s: string) => parts.filter((p) => p.step === s).reduce((a, p) => a + ((p.length * p.width * p.thickness) / 1e9) * dens(p.materialId) * p.qty, 0)
+    expect(w.byStep.find((s) => s.step === 'liner')!.kg).toBeCloseTo(partsOf('liner') + kg, 1)
+    expect(w.byStep.find((s) => s.step === 'middle')).toBeUndefined()
   })
 
   it('adds the heaviest cab', () => {

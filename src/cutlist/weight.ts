@@ -55,8 +55,8 @@ export function buildWeight(d: Design, lib: Library, shop: Shop): WeightReport {
     if (h.unit !== 'pcs') continue
     const each = h.name === 'Isolation clip' ? CLIP_WEIGHT_KG : (hingeKg(h.name) ?? latchKg(h.name) ?? 0)
     hardwareKg += each * h.qty
-    // Hinges and latches belong to the doors; clips decouple inner boxes (attributed to the middle step).
-    const at: BuildStep = h.name === 'Isolation clip' ? 'middle' : 'doors'
+    // Clips carry their box's step; hinges and latches belong to the doors.
+    const at: BuildStep = h.step ?? 'doors'
     step.set(at, (step.get(at) ?? 0) + each * h.qty)
   }
   const total = partsKg + hardwareKg

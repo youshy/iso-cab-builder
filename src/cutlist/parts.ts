@@ -27,7 +27,7 @@ export type Part = {
   notes: string[]
   warnings: string[]
 }
-export type HardwareItem = { name: string; qty: number; unit: 'pcs' | 'm' }
+export type HardwareItem = { name: string; qty: number; unit: 'pcs' | 'm'; step?: BuildStep }
 
 export const STEP_ORDER: BuildStep[] = ['shell', 'middle', 'liner', 'facets', 'panels', 'treatment', 'doors']
 
@@ -56,10 +56,11 @@ type Draft = Omit<Part, 'id' | 'warnings' | 'qty' | 'bevels' | 'notes' | 'kind' 
 export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]; hardware: HardwareItem[] } {
   const drafts: Draft[] = []
   const hw = new Map<string, HardwareItem>()
-  const addHw = (name: string, qty: number, unit: 'pcs' | 'm') => {
-    const cur = hw.get(name)
+  const addHw = (name: string, qty: number, unit: 'pcs' | 'm', step?: BuildStep) => {
+    const key = `${name}|${step ?? ''}`
+    const cur = hw.get(key)
     if (cur) cur.qty += qty
-    else hw.set(name, { name, qty, unit })
+    else hw.set(key, step ? { name, qty, unit, step } : { name, qty, unit })
   }
   const { inner } = resolveDims(d)
   const door = doorLayout(d, lib)
@@ -126,7 +127,7 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
         notes: [`around the ${label} panel perimeter`],
       })
     } else {
-      addHw('Isolation clip', Math.max(4, (Math.floor(L / CLIP_GRID) + 1) * (Math.floor(W / CLIP_GRID) + 1)), 'pcs')
+      addHw('Isolation clip', Math.max(4, (Math.floor(L / CLIP_GRID) + 1) * (Math.floor(W / CLIP_GRID) + 1)), 'pcs', part)
     }
   }
 

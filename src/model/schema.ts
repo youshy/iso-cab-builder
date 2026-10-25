@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { HINGE_WEIGHT_KG, LATCH_WEIGHT_KG } from './defaults'
 
 export const Vec3Schema = z.object({ x: z.number(), y: z.number(), z: z.number() })
 export type Vec3 = z.infer<typeof Vec3Schema>
@@ -191,9 +192,6 @@ const withKindWeight = (table: Record<string, number>) => (v: unknown) =>
   v && typeof v === 'object' && (v as { weightKg?: unknown }).weightKg === undefined
     ? { ...v, weightKg: table[(v as { kind?: string }).kind ?? ''] ?? 0.2 }
     : v
-
-export const HINGE_WEIGHT_KG = { butt: 0.15, piano: 0.6, 'lift-off': 0.4 }
-export const LATCH_WEIGHT_KG = { toggle: 0.25, compression: 0.2 }
 
 export const HingeTypeSchema = z.preprocess(withKindWeight(HINGE_WEIGHT_KG), z.object({
   id: z.string(),

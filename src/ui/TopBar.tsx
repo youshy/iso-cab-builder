@@ -1,3 +1,4 @@
+import { computed } from '@preact/signals'
 import { useState } from 'preact/hooks'
 import {
   addProject, compareDesign, compareVersion, currentProject, basedOn, design, library, loadVersion, newProject, projectId,
@@ -15,6 +16,14 @@ function download(name: string, text: string) {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+const weightKg = computed(() => buildWeight(design.value, library.value, shop.value).totalKg)
+/** Weight change against the compared version, or null with no comparison. */
+const weightDelta = computed(() => {
+  const cmp = compareDesign.value
+  if (!cmp) return null
+  return Math.round((weightKg.value - buildWeight(cmp, library.value, shop.value).totalKg) * 10) / 10
+})
 
 export function TopBar() {
   const [importError, setImportError] = useState<string | null>(null)
@@ -37,9 +46,8 @@ export function TopBar() {
     addProject(res.project)
   }
 
-  const kg = buildWeight(design.value, library.value, shop.value).totalKg
-  const cmp = compareDesign.value
-  const delta = cmp && compareVersion.value !== null ? Math.round((kg - buildWeight(cmp, library.value, shop.value).totalKg) * 10) / 10 : null
+  const kg = weightKg.value
+  const delta = weightDelta.value
 
   return (
     <header class="top">
