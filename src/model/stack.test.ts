@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDesign, defaultLibrary } from './defaults'
-import { addLayer, DEFAULT_GAP, insertGap, materialUsage, moveLayer, removeLayer, setLayerMaterial } from './stack'
+import { addLayer, canInsertGapAt, DEFAULT_GAP, insertGap, materialUsage, moveLayer, removeLayer, setLayerMaterial } from './stack'
 import type { StackItem } from './schema'
 
 const L = (materialId: string, thickness: number): StackItem => ({ kind: 'layer', materialId, thickness })
 
 describe('stack helpers', () => {
-  it('inserts a gap after the first layer, once', () => {
+  it('inserts a gap at the first free boundary; none free is a no-op', () => {
     const s = insertGap([L('plywood', 18), L('mdf', 18)])
     expect(s.map((i) => i.kind)).toEqual(['layer', 'gap', 'layer'])
     expect(s[1]).toMatchObject({ width: 25, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' })
@@ -89,6 +89,38 @@ describe('stack helpers', () => {
       expect(removeLayer(one, 0)).toBe(one)
       const g = [L('a', 1), { ...DEFAULT_GAP }, L('b', 2), L('c', 3)]
       expect(removeLayer(g, 3)).toHaveLength(3)
+    })
+    it('insertGap at boundary 3 adds a second cavity', () => {
+      const s = [L('a', 1), { ...DEFAULT_GAP }, L('b', 2), L('c', 3)]
+      const out = insertGap(s, lib, 3)
+      expect(kinds(out)).toEqual(['layer', 'gap', 'layer', 'gap', 'layer'])
+      expect((out[3] as any).fillMaterialId).toBe('rockwool')
+      expect(out[3]).not.toBe(out[1])
+    })
+    it('insertGap refuses boundaries next to a gap or at a face', () => {
+      const s = [L('a', 1), { ...DEFAULT_GAP }, L('b', 2), L('c', 3)]
+      for (const i of [0, 1, 2, 4]) {
+        expect(canInsertGapAt(s, i)).toBe(false)
+        expect(insertGap(s, lib, i)).toBe(s)
+      }
+      expect(canInsertGapAt(s, 3)).toBe(true)
+    })
+    it('insertGap without a boundary uses the first free one', () => {
+      const s = [L('a', 1), { ...DEFAULT_GAP }, L('b', 2), L('c', 3)]
+      expect(kinds(insertGap(s))).toEqual(['layer', 'gap', 'layer', 'gap', 'layer'])
+    })
+    it('insertGap falls back to the first fill material when rockwool is missing', () => {
+      const lib2 = { ...lib, materials: lib.materials.filter((m) => m.id !== 'rockwool') }
+      const fill = lib2.materials.find((m) => m.kind === 'fill')!
+      const out = insertGap([L('a', 1), L('b', 2)], lib2, 1)
+      expect((out[1] as any).fillMaterialId).toBe(fill.id)
+    })
+    it('moveLayer and removeLayer never make two gaps adjacent', () => {
+      const s = [L('a', 1), { ...DEFAULT_GAP }, L('b', 2), { ...DEFAULT_GAP }, L('c', 3)]
+      expect(removeLayer(s, 2)).toBe(s)
+      expect(moveLayer(s, 1, 1)).toBe(s)
+      expect(moveLayer(s, 3, -1)).toBe(s)
+      expect(kinds(removeLayer(s, 3))).toEqual(['layer', 'gap', 'layer', 'layer'])
     })
     it('removeLayer can remove the gap itself', () => {
       const s = [L('a', 1), { ...DEFAULT_GAP }, L('b', 2)]

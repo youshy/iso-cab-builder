@@ -10,6 +10,7 @@ import {
   escapeLevel,
   leaf,
   tlLeaf,
+  tlChain,
   tlStack,
   toOctaves,
 } from './tl'
@@ -90,6 +91,51 @@ describe('tlStack', () => {
     const r = tlStack([mdf(18)], lib)
     const sel = r.thirds.filter((_, i) => THIRD_OCTAVES[i] >= 100 && THIRD_OCTAVES[i] <= 3150)
     expect(r.single).toBeCloseTo(sel.reduce((a, b) => a + b, 0) / sel.length, 9)
+  })
+})
+
+describe('tlStack with several cavities', () => {
+  const ply = (t: number): Layer => ({ kind: 'layer', materialId: 'plywood', thickness: t })
+  const triple = (p: Partial<Gap> = {}): StackItem[] => [mdf(18), gap(p), mdf(18), gap(p), mdf(18)]
+  it('uses the transfer-matrix model and finds two resonances for a triple leaf', () => {
+    const r = tlStack(triple(), lib)
+    expect(r.model).toBe(TL_MODEL_LABEL.multi)
+    expect(TL_MODEL_LABEL.multi).toBe('Multi-leaf transfer-matrix estimate')
+    expect(r.f0s).toHaveLength(2)
+    expect(r.f0s[0]).toBeLessThan(r.f0s[1])
+    expect(r.f0).toBe(r.f0s[0])
+  })
+  it('lumped triple-leaf resonances agree with the chain', () => {
+    // equal masses m, equal springs s = rho c^2 / d: w^2 = s/m and 3 s/m
+    const m = 13.5, s = (1.21 * 343 ** 2) / 0.025
+    const r = tlStack(triple(), lib)
+    expect(r.f0s[0] / (Math.sqrt(s / m) / (2 * Math.PI))).toBeCloseTo(1, 1)
+    expect(r.f0s[1] / (Math.sqrt((3 * s) / m) / (2 * Math.PI))).toBeCloseTo(1, 1)
+  })
+  it('never falls below the mass law of the total mass', () => {
+    const r = tlStack(triple({ fill: 'empty', decoupling: 'strips' }), lib)
+    THIRD_OCTAVES.forEach((f, i) => expect(r.thirds[i]).toBeGreaterThanOrEqual(massLaw(40.5, f) - 1e-9))
+  })
+  it('insulation fill beats empty above the resonances', () => {
+    const ins = tlStack(triple(), lib)
+    const emp = tlStack(triple({ fill: 'empty' }), lib)
+    expect(at(ins.thirds, 1000)).toBeGreaterThan(at(emp.thirds, 1000))
+  })
+  it('strips lower TL above the lowest resonance', () => {
+    const clips = tlStack(triple(), lib)
+    const strips = tlStack(triple({ decoupling: 'strips' }), lib)
+    expect(at(strips.thirds, 1000)).toBeLessThan(at(clips.thirds, 1000))
+  })
+  it('chain model on a single cavity puts its resonance within 10% of Sharp', () => {
+    const items: StackItem[] = [ply(18), gap(), mdf(18)]
+    const sharp = tlStack(items, lib)
+    const chain = tlChain(items, lib)
+    expect(Math.abs(chain.f0! - sharp.f0!) / sharp.f0!).toBeLessThan(0.1)
+  })
+  it('single and double leaf report f0s consistently', () => {
+    expect(tlStack([mdf(18)], lib).f0s).toEqual([])
+    const r = tlStack([mdf(18), gap(), mdf(18)], lib)
+    expect(r.f0s).toEqual([r.f0])
   })
 })
 

@@ -66,12 +66,13 @@ export function Chart({ x, series, xLog, yLabel, markers = [], zeroLine }: Chart
         ))}
         {markers
           .filter((m) => m.x >= x0 && m.x <= x1)
-          .map((m) => {
+          .map((m, k) => {
             const right = tx(m.x) > W * 0.7
             return (
-              <g key={m.label}>
+              <g key={`${k}-${m.label}`}>
                 <line x1={tx(m.x)} x2={tx(m.x)} y1={M.t} y2={H - M.b} class="c-marker" />
-                <text x={tx(m.x) + (right ? -4 : 4)} y={M.t + 10} text-anchor={right ? 'end' : 'start'} class="c-mlabel">
+                {/* stagger labels so neighbouring markers stay readable */}
+                <text x={tx(m.x) + (right ? -4 : 4)} y={M.t + 10 + (k % 3) * 12} text-anchor={right ? 'end' : 'start'} class="c-mlabel">
                   {m.label} {Math.round(m.x)} Hz
                 </text>
               </g>

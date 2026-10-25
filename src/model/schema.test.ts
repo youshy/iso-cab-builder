@@ -25,9 +25,19 @@ describe('DesignSchema', () => {
     expect(() => DesignSchema.parse(defaultDesign())).not.toThrow()
   })
 
-  it('rejects a stack with two gaps', () => {
-    const d = { ...defaultDesign(), wallDefault: [layer, gap, gap] }
+  it('rejects a stack with two adjacent gaps', () => {
+    const d = { ...defaultDesign(), wallDefault: [layer, gap, gap, layer] }
     expect(DesignSchema.safeParse(d).success).toBe(false)
+  })
+
+  it('rejects a gap at either face', () => {
+    expect(DesignSchema.safeParse({ ...defaultDesign(), wallDefault: [gap, layer] }).success).toBe(false)
+    expect(DesignSchema.safeParse({ ...defaultDesign(), wallDefault: [layer, gap] }).success).toBe(false)
+  })
+
+  it('accepts a stack with two separated gaps', () => {
+    const d = { ...defaultDesign(), wallDefault: [layer, gap, layer, gap, layer] }
+    expect(DesignSchema.safeParse(d).success).toBe(true)
   })
 
   it('accepts a stack with one gap', () => {

@@ -1,21 +1,32 @@
-import type { Design, Gap, Layer, Library, StackItem, WallId } from './schema'
+import { gapsWellPlaced, type Design, type Gap, type Layer, type Library, type StackItem, type WallId } from './schema'
 
 export const DEFAULT_GAP: Gap = { kind: 'gap', width: 25, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' }
 
 export const hasGap = (s: StackItem[]): boolean => s.some((i) => i.kind === 'gap')
 
-/** Insert a gap after the first layer. A stack holds at most one gap, so a second insert is a no-op. */
-export function insertGap(s: StackItem[], gap: Gap = DEFAULT_GAP): StackItem[] {
-  if (hasGap(s)) return s
-  const at = Math.min(1, s.length)
-  return [...s.slice(0, at), { ...gap }, ...s.slice(at)]
+/** A cavity fits at boundary `i` (between items i-1 and i) when both neighbours are layers. */
+export const canInsertGapAt = (s: StackItem[], i: number): boolean =>
+  i >= 1 && i < s.length && s[i - 1].kind === 'layer' && s[i].kind === 'layer'
+
+/** First boundary that can take a cavity, or -1. */
+export const firstFreeBoundary = (s: StackItem[]): number => s.findIndex((_, i) => canInsertGapAt(s, i))
+
+/**
+ * Insert a cavity at boundary `atBoundary` (default: the first free one). Refused (stack returned unchanged)
+ * when that boundary touches a gap or a face. The fill is rockwool, or the library's first fill material.
+ */
+export function insertGap(s: StackItem[], lib?: Library, atBoundary: number = firstFreeBoundary(s)): StackItem[] {
+  if (!canInsertGapAt(s, atBoundary)) return s
+  const fills = lib?.materials.filter((m) => m.kind === 'fill') ?? []
+  const fillMaterialId =
+    !lib || fills.some((m) => m.id === DEFAULT_GAP.fillMaterialId) ? DEFAULT_GAP.fillMaterialId : (fills[0]?.id ?? DEFAULT_GAP.fillMaterialId)
+  return [...s.slice(0, atBoundary), { ...DEFAULT_GAP, fillMaterialId }, ...s.slice(atBoundary)]
 }
 
-/** A stack is valid when it has a layer and the gap, if any, is not the outermost or innermost item. */
-const isValid = (s: StackItem[]): boolean =>
-  s.some((i) => i.kind === 'layer') && s[0].kind !== 'gap' && s[s.length - 1].kind !== 'gap'
+/** A stack is valid when it has a layer, no gap sits at a face and no two gaps touch. */
+const isValid = (s: StackItem[]): boolean => s.some((i) => i.kind === 'layer') && gapsWellPlaced(s)
 
-/** Move item `i` by `dir` (-1 up, +1 down). Out of range, or leaving the gap at a face, returns the stack unchanged. */
+/** Move item `i` by `dir` (-1 up, +1 down). Out of range, leaving a gap at a face or next to another gap, returns the stack unchanged. */
 export function moveLayer(s: StackItem[], i: number, dir: -1 | 1): StackItem[] {
   const j = i + dir
   if (i < 0 || i >= s.length || j < 0 || j >= s.length) return s
@@ -24,7 +35,7 @@ export function moveLayer(s: StackItem[], i: number, dir: -1 | 1): StackItem[] {
   return isValid(out) ? out : s
 }
 
-/** Remove item `i`. Refused when no Layer would remain or the gap would end up at a face. */
+/** Remove item `i`. Refused when no Layer would remain, a gap would end up at a face or two gaps would touch. */
 export function removeLayer(s: StackItem[], i: number): StackItem[] {
   if (i < 0 || i >= s.length) return s
   const out = s.filter((_, k) => k !== i)

@@ -134,6 +134,37 @@ describe('doorLayout', () => {
   })
 })
 
+describe('several cavities', () => {
+  const triple = (): Design['wallDefault'] => [
+    { kind: 'layer', materialId: 'plywood', thickness: 18 },
+    { kind: 'gap', width: 25, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' },
+    { kind: 'layer', materialId: 'mdf', thickness: 12 },
+    { kind: 'gap', width: 25, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' },
+    { kind: 'layer', materialId: 'mdf', thickness: 18 },
+  ]
+  it('dual: outer leaf is the first group, inner the last, one middle cutout', () => {
+    const d = defaultDesign()
+    d.wallDefault = triple()
+    const r = dualLayout(d, lib)
+    expect(r.outer.leaves[0].t).toBe(18)
+    expect(r.inner.mount).toBe('liner')
+    expect(r.middleCutouts).toEqual([r.inner.cutout])
+    expect(r.betweenDepth).toBe(98 - r.inner.rebate!.depth)
+  })
+  it('no middle cutouts for one cavity', () => {
+    const d = defaultDesign()
+    d.wallDefault = gapStack()
+    expect(dualLayout(d, lib).middleCutouts).toEqual([])
+  })
+  it('wall door: a seal line per leaf group face', () => {
+    const d = structuredClone(defaultDesign())
+    d.door.kind = 'wall'
+    d.door.side = 'left'
+    d.wallDefault = triple()
+    expect(doorLayout(d, lib).wall!.seals.map((s) => s.line)).toEqual(['shell', 'middle 1', 'liner'])
+  })
+})
+
 describe('whole-wall door', () => {
   const wallDesign = (): Design => {
     const d = structuredClone(defaultDesign())

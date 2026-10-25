@@ -3,7 +3,8 @@ import { defaultDesign } from '../model/defaults'
 import type { Design, WallInterior } from '../model/schema'
 import { autoDoorSide, doorWall } from '../doors/side'
 import { resolveDims } from './dimensions'
-import { stackThickness } from './walls'
+import { cavities, leafGroups, splitStack, stackThickness } from './walls'
+import type { Gap, Layer } from '../model/schema'
 
 const base = (): Design => {
   const d = structuredClone(defaultDesign())
@@ -96,5 +97,29 @@ describe('stackThickness', () => {
         { kind: 'layer', materialId: 'mdf', thickness: 18 },
       ]),
     ).toBe(61)
+  })
+})
+
+describe('leafGroups and cavities', () => {
+  const L = (materialId: string, thickness: number): Layer => ({ kind: 'layer', materialId, thickness })
+  const G = (width: number): Gap => ({ kind: 'gap', width, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' })
+  const triple = [L('plywood', 18), G(25), L('mdf', 18), L('mdf', 12), G(40), L('mdf', 18)]
+  it('splits layers between cavities, outside-in', () => {
+    expect(leafGroups(triple)).toEqual([[L('plywood', 18)], [L('mdf', 18), L('mdf', 12)], [L('mdf', 18)]])
+    expect(cavities(triple).map((g) => g.width)).toEqual([25, 40])
+  })
+  it('a stack without cavities is one group', () => {
+    const s = [L('plywood', 18), L('mdf', 18)]
+    expect(leafGroups(s)).toEqual([s])
+    expect(cavities(s)).toEqual([])
+  })
+  it('splitStack keeps shell, first gap and liner; middle holds the groups between', () => {
+    const r = splitStack(triple)
+    expect(r.shell).toEqual([L('plywood', 18)])
+    expect(r.gap?.width).toBe(25)
+    expect(r.liner).toEqual([L('mdf', 18)])
+    expect(r.middle).toEqual([[L('mdf', 18), L('mdf', 12)]])
+    expect(splitStack([L('a', 1)])).toEqual({ shell: [L('a', 1)], gap: null, liner: [], middle: [] })
+    expect(splitStack([L('a', 1), G(5), L('b', 2)]).middle).toEqual([])
   })
 })

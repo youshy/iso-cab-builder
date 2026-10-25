@@ -18,6 +18,9 @@ export type LeafLayout = {
   direction: 'in' | 'out'
 }
 
+/** Face of a leaf group a wall-door seal runs on: outermost, innermost or a group between (1-based). */
+export type SealLine = 'shell' | 'liner' | `middle ${number}`
+
 /** The whole door wall as one swinging panel. */
 export type WallDoorLayout = {
   side: DoorSide
@@ -26,7 +29,7 @@ export type WallDoorLayout = {
   hingeEdge: 'left' | 'right' | 'top' | 'bottom'
   hinges: number[]
   latches: number[]
-  seals: { line: 'shell' | 'liner'; perimeterMm: number }[]
+  seals: { line: SealLine; perimeterMm: number }[]
   swingRadius: number
   collisions: string[]
   notes: string[]
@@ -39,6 +42,8 @@ export type DoorLayout = {
   inner: LeafLayout | null // null in wall mode
   wall: WallDoorLayout | null // null in dual mode
   betweenDepth: number
+  /** Wall cutouts through the leaf groups between the outer and inner leaves (equal to the inner cutout). */
+  middleCutouts: { w: number; h: number }[]
   cabsThrough: { cabId: string; fits: boolean }[]
   collisions: string[]
   notes: string[]
@@ -57,7 +62,7 @@ function largestCab(d: Design): Cab {
   return d.cabs.reduce((a, c) => (c.w * c.h * c.d > a.w * a.h * a.d ? c : a))
 }
 
-/** Layers of the two leaves when the door does not override them. */
+/** Layers of the two leaves when the door does not override them: the outermost and innermost leaf groups. */
 export function doorLeafLayers(d: Design): { outer: Layer[]; inner: Layer[] } {
   const stack = wallStack(d, doorWall(d))
   const { shell, gap, liner } = splitStack(stack)
@@ -124,8 +129,12 @@ function wallDoorLayout(d: Design, lib: Library, side: DoorSide): WallDoorLayout
 
   const inner = resolveDims(d).inner
   const innerW = side === 'front' ? inner.x : inner.z
+  // Middle group faces sit inside the wall; their seal runs on the inner opening like the liner's.
+  const innerPerimeter = 2 * (innerW + inner.y)
+  const { gap, middle } = splitStack(stack)
   const seals: WallDoorLayout['seals'] = [{ line: 'shell', perimeterMm: 2 * (panel.w + panel.h) }]
-  if (splitStack(stack).gap) seals.push({ line: 'liner', perimeterMm: 2 * (innerW + inner.y) })
+  middle.forEach((_, k) => seals.push({ line: `middle ${k + 1}`, perimeterMm: innerPerimeter }))
+  if (gap) seals.push({ line: 'liner', perimeterMm: innerPerimeter })
 
   const collisions: string[] = []
   if (swingRadius > d.door.roomClearance) {
@@ -153,7 +162,7 @@ export function doorLayout(d: Design, lib: Library): DoorLayout {
   if (d.door.kind === 'wall') {
     const wall = wallDoorLayout(d, lib, side)
     return {
-      kind: 'wall', side, outer: null, inner: null, wall, betweenDepth: 0,
+      kind: 'wall', side, outer: null, inner: null, wall, betweenDepth: 0, middleCutouts: [],
       cabsThrough: d.cabs.map((c) => ({ cabId: c.id, fits: true })),
       collisions: [...wall.collisions], notes: [...wall.notes],
     }
@@ -230,5 +239,6 @@ export function doorLayout(d: Design, lib: Library): DoorLayout {
     }
   }
 
-  return { kind: 'dual', side, outer, inner, wall: null, betweenDepth, cabsThrough, collisions, notes }
+  const middleCutouts = wallSplit.middle.map(() => ({ ...inner.cutout }))
+  return { kind: 'dual', side, outer, inner, wall: null, betweenDepth, middleCutouts, cabsThrough, collisions, notes }
 }

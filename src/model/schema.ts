@@ -45,10 +45,15 @@ export type Gap = z.infer<typeof GapSchema>
 export const StackItemSchema = z.discriminatedUnion('kind', [LayerSchema, GapSchema])
 export type StackItem = z.infer<typeof StackItemSchema>
 
-/** Outside-in stack, at most one gap. */
+/** True when no two gaps touch and, if there is a gap, both faces are layers. */
+export const gapsWellPlaced = (s: StackItem[]): boolean =>
+  !s.some((i) => i.kind === 'gap') ||
+  (s[0].kind === 'layer' && s[s.length - 1].kind === 'layer' && s.every((it, k) => k === 0 || it.kind !== 'gap' || s[k - 1].kind !== 'gap'))
+
+/** Outside-in stack. Any number of gaps (cavities), never adjacent, never at a face. */
 export const StackSchema = z
   .array(StackItemSchema)
-  .refine((s) => s.filter((i) => i.kind === 'gap').length <= 1, { message: 'at most one gap per stack' })
+  .refine(gapsWellPlaced, { message: 'gaps must sit between layers and never touch each other' })
 
 export const CabSchema = z.object({
   id: z.string(),

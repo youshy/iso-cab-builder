@@ -1,9 +1,10 @@
 import { signal } from '@preact/signals'
+import { Fragment } from 'preact'
 import { useState } from 'preact/hooks'
 import { escape, OCTAVES, THIRD_OCTAVES, tlStack } from '../../acoustics/tl'
 import { stackThickness, WALLS, wallStack } from '../../geometry/walls'
 import type { Gap, JointType, Layer, StackItem, WallId } from '../../model/schema'
-import { addLayer, hasGap, insertGap, moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
+import { addLayer, canInsertGapAt, firstFreeBoundary, insertGap, moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
 import { compareDesign, compareVersion, design, fmtLen, library, update } from '../../model/store'
 import { Chart, type ChartSeries } from '../Chart'
 import { libraryOpen } from '../library/MaterialLibrary'
@@ -117,7 +118,7 @@ function GapCells({ item, i, target }: { item: Gap; i: number; target: Target })
 function StackEditor({ target, stack }: { target: Target; stack: StackItem[] }) {
   const rows = useRowIds(stack.length)
   const lib = library.value
-  const layerCount = stack.filter((i) => i.kind === 'layer').length
+  const free = firstFreeBoundary(stack)
   /** Apply a guarded stack edit; row ids follow only when the edit was accepted. */
   const run = (next: StackItem[], track: () => void) => {
     if (next === stack) return
@@ -127,24 +128,33 @@ function StackEditor({ target, stack }: { target: Target; stack: StackItem[] }) 
   return (
     <div>
       {stack.map((item, i) => (
-        <div class={`srow ${item.kind === 'gap' ? 'gap' : ''}`} key={rows.ids[i]}>
-          {item.kind === 'layer' ? <LayerCells item={item} i={i} target={target} /> : <GapCells item={item} i={i} target={target} />}
-          <button type="button" class="btn iconbtn" aria-label={`Move item ${i + 1} outward`} disabled={moveLayer(stack, i, -1) === stack} onClick={() => run(moveLayer(stack, i, -1), () => rows.swapped(i, i - 1))}>
-            Up
-          </button>
-          <button type="button" class="btn iconbtn" aria-label={`Move item ${i + 1} inward`} disabled={moveLayer(stack, i, 1) === stack} onClick={() => run(moveLayer(stack, i, 1), () => rows.swapped(i, i + 1))}>
-            Down
-          </button>
-          <button type="button" class="btn iconbtn" aria-label={`Remove item ${i + 1}`} disabled={removeLayer(stack, i) === stack} onClick={() => run(removeLayer(stack, i), () => rows.removed(i))}>
-            Remove
-          </button>
-        </div>
+        <Fragment key={rows.ids[i]}>
+          {canInsertGapAt(stack, i) && (
+            <div class="boundary">
+              <button type="button" class="btn small" aria-label={`Add cavity between items ${i} and ${i + 1}`} onClick={() => run(insertGap(stack, lib, i), () => rows.inserted(i))}>
+                Add cavity here
+              </button>
+            </div>
+          )}
+          <div class={`srow ${item.kind === 'gap' ? 'gap' : ''}`}>
+            {item.kind === 'layer' ? <LayerCells item={item} i={i} target={target} /> : <GapCells item={item} i={i} target={target} />}
+            <button type="button" class="btn iconbtn" aria-label={`Move item ${i + 1} outward`} disabled={moveLayer(stack, i, -1) === stack} onClick={() => run(moveLayer(stack, i, -1), () => rows.swapped(i, i - 1))}>
+              Up
+            </button>
+            <button type="button" class="btn iconbtn" aria-label={`Move item ${i + 1} inward`} disabled={moveLayer(stack, i, 1) === stack} onClick={() => run(moveLayer(stack, i, 1), () => rows.swapped(i, i + 1))}>
+              Down
+            </button>
+            <button type="button" class="btn iconbtn" aria-label={`Remove item ${i + 1}`} disabled={removeLayer(stack, i) === stack} onClick={() => run(removeLayer(stack, i), () => rows.removed(i))}>
+              Remove
+            </button>
+          </div>
+        </Fragment>
       ))}
       <div class="row">
         <button type="button" class="btn" onClick={() => run(addLayer(stack, lib), () => rows.inserted(stack.length))}>
           Add layer
         </button>
-        <button type="button" class="btn" disabled={hasGap(stack) || layerCount < 2} onClick={() => run(insertGap(stack), () => rows.inserted(Math.min(1, stack.length)))}>
+        <button type="button" class="btn" disabled={free < 0} onClick={() => run(insertGap(stack, lib, free), () => rows.inserted(free))}>
           Add air gap
         </button>
         <span class="hint num">Total {fmtLen(stackThickness(stack))}, outside first</span>
@@ -195,13 +205,14 @@ function StackChart({ title, stack, compareStack }: { title: string; stack: Stac
       <b>{title}</b>
       <div class="hint">
         {cur.model}. Average TL about {cur.single.toFixed(0)} dB, 100 Hz to 3.15 kHz.
+        {cur.f0s.length > 0 && ` Dips at ${cur.f0s.map((f) => `${Math.round(f)} Hz`).join(', ')}.`}
       </div>
       <Chart
         x={THIRD_OCTAVES}
         series={series}
         xLog
         yLabel="TL (dB)"
-        markers={cur.f0 !== null ? [{ x: cur.f0, label: 'air-gap resonance' }] : []}
+        markers={cur.f0s.map((f, k) => ({ x: f, label: cur.f0s.length > 1 ? `resonance ${k + 1}` : 'air-gap resonance' }))}
       />
     </div>
   )

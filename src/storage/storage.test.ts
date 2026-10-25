@@ -66,7 +66,9 @@ describe('export/import', () => {
       (p) => (p.versions[0].design.wallOverrides = { left: [{ kind: 'layer', materialId: 'ghost', thickness: 5 }] }),
       (p) =>
         (p.versions[0].design.wallDefault = [
+          { kind: 'layer', materialId: 'plywood', thickness: 18 },
           { kind: 'gap', width: 10, decoupling: 'strips', fill: 'insulation', fillMaterialId: 'ghost' },
+          { kind: 'layer', materialId: 'mdf', thickness: 18 },
         ]),
       (p) =>
         (p.versions[0].design.interior = {
