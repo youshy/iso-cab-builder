@@ -1,3 +1,4 @@
+import { signal } from '@preact/signals'
 import { useState } from 'preact/hooks'
 import { escape, OCTAVES, THIRD_OCTAVES, tlStack } from '../../acoustics/tl'
 import { stackThickness, WALLS, wallStack } from '../../geometry/walls'
@@ -8,8 +9,12 @@ import { Chart, type ChartSeries } from '../Chart'
 import { libraryOpen } from '../library/MaterialLibrary'
 import { NumberField } from '../NumberField'
 import { useRowIds } from '../useRowIds'
+import { View3DPanel } from '../views/View3D'
 
 type Target = 'default' | WallId
+
+/** The override wall being edited; outlined in the 3D view. Null while the default stack is the focus. */
+const editing = signal<WallId | null>(null)
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 const targetTitle = (t: Target) => (t === 'default' ? 'Default wall' : `${cap(t)} wall`)
@@ -31,6 +36,8 @@ function toggleOverride(w: WallId, on: boolean) {
     if (on) d.wallOverrides[w] = structuredClone(d.wallDefault)
     else delete d.wallOverrides[w]
   })
+  if (on) editing.value = w
+  else if (editing.value === w) editing.value = null
 }
 
 function LayerCells({ item, i, target }: { item: Layer; i: number; target: Target }) {
@@ -274,7 +281,7 @@ export function WallsStep() {
           ))}
         </div>
         {overrides.map((w) => (
-          <div class="card" key={w}>
+          <div class={`card ${editing.value === w ? 'editing' : ''}`} key={w} onFocusIn={() => (editing.value = w)} onPointerEnter={() => (editing.value = w)}>
             <b>{targetTitle(w)}</b>
             <StackEditor key={w} target={w} stack={d.wallOverrides[w]!} />
           </div>
@@ -284,6 +291,9 @@ export function WallsStep() {
         <JointPicker />
       </aside>
       <section class="stage wallsstage">
+        <div class="wallview">
+          <View3DPanel design={d} highlight={editing.value && d.wallOverrides[editing.value] ? editing.value : undefined} initial="section" />
+        </div>
         <h3>Transmission loss per stack</h3>
         <StackChart title="Default wall" stack={d.wallDefault} compareStack={cmp ? cmp.wallDefault : null} />
         {overrides.map((w) => (

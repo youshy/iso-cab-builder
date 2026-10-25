@@ -180,6 +180,9 @@ aside.interiorside summary .unit{font-weight:400;margin-left:6px}
 .view3d{flex:1;min-height:0;width:100%;overflow:hidden}
 .view3dmode{position:absolute;top:6px;right:8px;z-index:1}
 .view3dpanel .lbl{z-index:1}
+.legend3d{position:absolute;left:12px;bottom:10px;margin:0;padding:6px 8px;list-style:none;font-size:12px;color:var(--ink-2);background:color-mix(in oklch,var(--bg) 85%,transparent);border:1px solid var(--line);border-radius:6px;pointer-events:none}
+.legend3d li{display:flex;align-items:center;gap:6px}
+.legend3d i{width:10px;height:10px;border:1px solid var(--line-strong);border-radius:2px}
 /* doors step */
 .section .sv-leaf{fill:var(--panel);stroke:var(--ink);stroke-width:1.5;vector-effect:non-scaling-stroke}
 .section .sv-leaf.inner{fill:var(--line)}
@@ -192,3 +195,5 @@ aside.doorside .results li{padding:2px 0;border-bottom:1px solid var(--line)}
 aside.doorside .results .k{color:var(--ink-2);display:inline-block;min-width:92px}
 aside.doorside .collisions p{margin:2px 0}
 .doorstage{grid-template-rows:auto 1fr}
+.wallview{display:grid;height:340px;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:12px}
+.card.editing{border-color:var(--accent)}

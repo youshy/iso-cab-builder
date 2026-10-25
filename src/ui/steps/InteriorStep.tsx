@@ -2,6 +2,7 @@ import { signal } from '@preact/signals'
 import { doorWall } from '../../doors/side'
 import { resolveDims } from '../../geometry/dimensions'
 import { widthError } from '../../geometry/facets'
+import { clampTo, freeSpan, panelPlane, panelWarnings } from '../../geometry/panels'
 import { cabFit, cornerFlags, inactiveFacetWarnings } from '../../geometry/space'
 import { inactiveTreatmentWarnings } from '../../geometry/treatments'
 import { wallPlaneAxes, WALLS } from '../../geometry/walls'
@@ -208,7 +209,7 @@ function WallEditor({ d, w }: { d: Design; w: WallId }) {
 }
 
 /** Name of the two axes of a panel's plane, in x,y,z order. */
-const planeOf = (normal: Axis): [Axis, Axis] => AXES.filter((a) => a !== normal) as [Axis, Axis]
+const planeOf = panelPlane
 
 const newLayer = () => ({
   kind: 'layer' as const,
@@ -220,18 +221,29 @@ const newInsulation = () => ({
   thickness: DEFAULT_INSULATION.thickness,
 })
 
+/** A panel across `normal`, centred and spanning the space the walls leave free. */
+function fitPanel(d: Design, q: InnerPanel, normal: Axis) {
+  const [a, b] = planeOf(normal)
+  const [n0, n1] = freeSpan(d, normal)
+  q.normal = normal
+  ;[q.u0, q.u1] = freeSpan(d, a)
+  ;[q.v0, q.v1] = freeSpan(d, b)
+  q.position = round1((n0 + n1) / 2)
+}
+
 function newPanel(d: Design): InnerPanel {
-  const inner = resolveDims(d).inner
-  return {
-    id: newId(), normal: 'x', position: round1(inner.x / 2), u0: 0, u1: inner.y, v0: 0, v1: inner.z,
-    layers: [newLayer()], insulation: null,
-  }
+  const q: InnerPanel = { id: newId(), normal: 'x', position: 0, u0: 0, u1: 0, v0: 0, v1: 0, layers: [newLayer()], insulation: null }
+  fitPanel(d, q, 'x')
+  return q
 }
 
 function PanelCard({ p, n }: { p: InnerPanel; n: number }) {
   const lib = library.value
   const edit = (fn: (x: InnerPanel) => void) => update((d) => void fn(d.panels.find((q) => q.id === p.id)!))
   const [u, v] = planeOf(p.normal)
+  const inner = resolveDims(design.value).inner
+  // Position and extents are kept inside the inner cavity.
+  const setClamped = (key: 'position' | 'u0' | 'u1' | 'v0' | 'v1', max: number) => (val: number) => edit((q) => (q[key] = clampTo(val, max)))
   const fills = lib.materials.filter((m) => m.kind === 'fill')
   const layerMats = lib.materials.filter((m) => m.kind !== 'fill')
   const rows = useRowIds(p.layers.length)
@@ -247,24 +259,19 @@ function PanelCard({ p, n }: { p: InnerPanel; n: number }) {
       <div class="row">
         <span class="rl">Across</span>
         <select aria-label={`Panel ${n} direction`} value={p.normal} onChange={(e) => update((d) => {
-          const q = d.panels.find((z) => z.id === p.id)!
-          const inner = resolveDims(d).inner
-          q.normal = (e.target as HTMLSelectElement).value as Axis
-          const [a, b] = planeOf(q.normal)
-          q.u0 = 0; q.u1 = inner[a]; q.v0 = 0; q.v1 = inner[b]
-          q.position = round1(inner[q.normal] / 2)
+          fitPanel(d, d.panels.find((z) => z.id === p.id)!, (e.target as HTMLSelectElement).value as Axis)
         })}>
           {AXES.map((a) => <option key={a} value={a}>{AXIS_NAME[a]}</option>)}
         </select>
-        <NumberField label="At" ariaLabel={`Panel ${n} position`} value={p.position} min={-1e9} allowZero onCommit={(val) => edit((q) => (q.position = val))} />
+        <NumberField label="At" ariaLabel={`Panel ${n} position`} value={p.position} allowZero onCommit={setClamped('position', inner[p.normal])} />
       </div>
       <div class="row">
-        <NumberField label={`${AXIS_NAME[u]} from`} value={p.u0} min={-1e9} allowZero onCommit={(val) => edit((q) => (q.u0 = val))} />
-        <NumberField label="to" value={p.u1} min={-1e9} allowZero onCommit={(val) => edit((q) => (q.u1 = val))} />
+        <NumberField label={`${AXIS_NAME[u]} from`} value={p.u0} allowZero onCommit={setClamped('u0', inner[u])} />
+        <NumberField label="to" value={p.u1} allowZero onCommit={setClamped('u1', inner[u])} />
       </div>
       <div class="row">
-        <NumberField label={`${AXIS_NAME[v]} from`} value={p.v0} min={-1e9} allowZero onCommit={(val) => edit((q) => (q.v0 = val))} />
-        <NumberField label="to" value={p.v1} min={-1e9} allowZero onCommit={(val) => edit((q) => (q.v1 = val))} />
+        <NumberField label={`${AXIS_NAME[v]} from`} value={p.v0} allowZero onCommit={setClamped('v0', inner[v])} />
+        <NumberField label="to" value={p.v1} allowZero onCommit={setClamped('v1', inner[v])} />
       </div>
       {p.layers.map((l, i) => (
         <div class="row" key={rows.ids[i]}>
@@ -327,7 +334,7 @@ function Readout({ d }: { d: Design }) {
   const free = resolveDims(d).free
   const fits = cabFit(d)
   const corners = cornerFlags(d)
-  const warnings = [...inactiveFacetWarnings(d), ...inactiveTreatmentWarnings(d)]
+  const warnings = [...inactiveFacetWarnings(d), ...inactiveTreatmentWarnings(d), ...panelWarnings(d)]
   return (
     <div class="readout">
       <div class="row">

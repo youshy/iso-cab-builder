@@ -1,13 +1,24 @@
 import { doorLayout, SPLIT_GAP, type LeafLayout } from '../doors/doors'
-import type { Axis, Design, Library, WallId } from '../model/schema'
+import type { Axis, Design, Layer, Library, WallId } from '../model/schema'
 import { resolveDims } from './dimensions'
 import { packingDepth } from './facets'
+import { clampTo, panelPlane } from './panels'
 import { cabBox } from './space'
 import { panelExtent, panelTreatments, wallTreatments } from './treatments'
 import { activeInterior, splitStack, stackThickness, wallNormal, wallPlaneAxes, wallStack, WALLS } from './walls'
 
-export type SolidKind = 'shell' | 'liner' | 'facet' | 'panel' | 'cab' | 'door' | 'treatment'
-export type Solid = { name: string; kind: SolidKind; wall?: WallId; vertices: number[]; indices: number[] }
+export type SolidKind = 'layer' | 'facet' | 'panel' | 'cab' | 'door' | 'treatment'
+export type Solid = {
+  name: string
+  kind: SolidKind
+  wall?: WallId
+  /** Wall layers: the material, which side of the air gap it is on, and whether it belongs to a whole-wall door. */
+  materialId?: string
+  part?: 'shell' | 'liner'
+  door?: boolean
+  vertices: number[]
+  indices: number[]
+}
 
 const AXES: Axis[] = ['x', 'y', 'z']
 const HIGH: WallId[] = ['right', 'top', 'front']
@@ -99,29 +110,35 @@ export function buildScene(d: Design, lib: Library): { solids: Solid[] } {
     const { shell, gap, liner } = splitStack(wallStack(d, w))
     const sum = (ls: { thickness: number }[]) => ls.reduce((s, l) => s + l.thickness, 0)
     const total = thick(w)
-    const tShell = sum(shell)
     const tLiner = sum(liner)
     const [u, v] = wallPlaneAxes(w)
     // Distance outward from the inner face, then converted to a coordinate along the normal.
     const range = (from: number, to: number): [number, number] =>
       high ? [inner[n] + from, inner[n] + to] : [0 - to, 0 - from]
-    const make = (kind: 'shell' | 'liner', from: number, to: number) => {
+    const make = (l: Layer, part: 'shell' | 'liner', k: number, from: number, to: number) => {
       if (to - from <= 0) return
+      const name = `${w}-${part}-${k + 1}`
+      const tag = { materialId: l.materialId, part }
       if (w !== side || !hole) {
-        solids.push(box(`${w}-${kind}`, w === side ? 'door' : kind, w, {
-          [n]: range(from, to), [u]: extent(w, u), [v]: extent(w, v),
-        } as Record<Axis, [number, number]>))
+        solids.push({
+          ...box(name, 'layer', w, { [n]: range(from, to), [u]: extent(w, u), [v]: extent(w, v) } as Record<Axis, [number, number]>),
+          ...tag, ...(w === side ? { door: true } : {}),
+        })
         return
       }
       // Door wall: boxes around the cutout.
       around([extent(w, wAxis), extent(w, hAxis)], hole).forEach(([rw, rh], i, all) => {
-        solids.push(box(all.length > 1 ? `${w}-${kind}-${i + 1}` : `${w}-${kind}`, kind, w, {
-          [n]: range(from, to), [wAxis]: rw, [hAxis]: rh,
-        } as Record<Axis, [number, number]>))
+        solids.push({
+          ...box(all.length > 1 ? `${name}-${i + 1}` : name, 'layer', w, { [n]: range(from, to), [wAxis]: rw, [hAxis]: rh } as Record<Axis, [number, number]>),
+          ...tag,
+        })
       })
     }
-    make('shell', total - tShell, total)
-    if (gap) make('liner', 0, tLiner)
+    // Shell layers stack inward from the outer face; liner layers stack outward from the inner face.
+    let at = total
+    shell.forEach((l, k) => { make(l, 'shell', k, at - l.thickness, at); at -= l.thickness })
+    at = tLiner
+    if (gap) liner.forEach((l, k) => { make(l, 'liner', k, at - l.thickness, at); at -= l.thickness })
   }
 
   for (const w of WALLS) {
@@ -178,20 +195,31 @@ export function buildScene(d: Design, lib: Library): { solids: Solid[] } {
     })
   }
 
+  // Panels and their treatments are clipped to the inner cavity so nothing pokes through the walls.
+  const clip = (r: Record<Axis, Range>): Record<Axis, Range> | null => {
+    const out = { ...r }
+    for (const a of AXES) {
+      out[a] = [clampTo(Math.min(...r[a]), inner[a]), clampTo(Math.max(...r[a]), inner[a])]
+      if (out[a][1] - out[a][0] <= 1e-6) return null
+    }
+    return out
+  }
+  const putClipped = (name: string, kind: SolidKind, r: Record<Axis, Range>) => {
+    const c = clip(r)
+    if (c) solids.push(box(name, kind, undefined, c))
+  }
   d.panels.forEach((p, i) => {
     const e = panelExtent(d, p)
-    const [u, v] = otherAxes(p.normal)
+    const [u, v] = panelPlane(p.normal)
     const ranges = { [u]: [p.u0, p.u1], [v]: [p.v0, p.v1] }
-    solids.push(box(`panel-${i + 1}`, 'panel', undefined, {
-      ...ranges, [p.normal]: [e.slabLo, e.slabHi],
-    } as Record<Axis, [number, number]>))
+    putClipped(`panel-${i + 1}`, 'panel', { ...ranges, [p.normal]: [e.slabLo, e.slabHi] } as Record<Axis, Range>)
     for (const side of ['neg', 'pos'] as const) {
       let from = side === 'neg' ? e.slabLo : e.slabHi
       panelTreatments(d, p.id, side).forEach((t, k) => {
         const to = side === 'neg' ? from - t.thickness : from + t.thickness
-        solids.push(box(`panel-${i + 1}-treatment-${side}-${k + 1}`, 'treatment', undefined, {
+        putClipped(`panel-${i + 1}-treatment-${side}-${k + 1}`, 'treatment', {
           ...ranges, [p.normal]: [Math.min(from, to), Math.max(from, to)],
-        } as Record<Axis, [number, number]>))
+        } as Record<Axis, Range>)
         from = to
       })
     }
@@ -202,9 +230,8 @@ export function buildScene(d: Design, lib: Library): { solids: Solid[] } {
   const cab = d.sim.cabId === '' ? undefined : d.cabs.find((c) => c.id === d.sim.cabId)
   if (cab) {
     const b = cabBox(d, cab)
-    solids.push(box('cab', 'cab', undefined, {
-      x: [b.min.x, b.max.x], y: [b.min.y, b.max.y], z: [b.min.z, b.max.z],
-    }))
+    // A cab that does not fit is shown cut off at the cavity rather than through the walls.
+    putClipped('cab', 'cab', { x: [b.min.x, b.max.x], y: [b.min.y, b.max.y], z: [b.min.z, b.max.z] })
   }
   return { solids }
 }

@@ -1,19 +1,19 @@
-import { signal } from '@preact/signals'
-import { useEffect, useRef } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import {
   AmbientLight, BufferGeometry, Color, DirectionalLight, DoubleSide, EdgesGeometry, Float32BufferAttribute,
-  Group, LineBasicMaterial, LineSegments, Material, Mesh, MeshStandardMaterial, PerspectiveCamera, Scene, Vector3, WebGLRenderer,
+  Group, LineBasicMaterial, LineSegments, Material, Mesh, MeshStandardMaterial, PerspectiveCamera, Plane, Scene, Vector3, WebGLRenderer,
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { doorWall } from '../../doors/side'
 import { resolveDims } from '../../geometry/dimensions'
 import { buildScene, type Solid } from '../../geometry/mesh'
-import { wallNormal } from '../../geometry/walls'
-import type { Design, WallId } from '../../model/schema'
+import { wallNormal, wallStack, WALLS } from '../../geometry/walls'
+import type { Design, Library, WallId } from '../../model/schema'
 import { library } from '../../model/store'
 import { Seg } from '../Seg'
+import { materialSwatch } from './palette'
 
-export type Mode3D = 'solid' | 'cutaway' | 'exploded'
+export type Mode3D = 'solid' | 'cutaway' | 'exploded' | 'section'
 type Props = { design: Design; highlight?: WallId; mode: Mode3D }
 
 const EXPLODE = 80
@@ -21,39 +21,46 @@ const REBUILD_DELAY = 50
 const HIGH: WallId[] = ['right', 'top', 'front']
 // Flat greys approximating the token palette (--bg, --line-strong, --ink-3, --accent).
 const BG = '#f7f6f3'
-const COLOR = { door: '#cdbfa8', shell: '#dedbd5', liner: '#c4c0b8', facet: '#9a968f', accent: '#b45a2c', cab: '#6f6c66', treatment: '#c9bfae', edge: '#5d5a54' }
+const COLOR = { door: '#cdbfa8', facet: '#9a968f', accent: '#b45a2c', cab: '#6f6c66', treatment: '#c9bfae', edge: '#5d5a54' }
 
 function hidden(s: Solid, mode: Mode3D, door: WallId): boolean {
   if (mode !== 'cutaway') return false
   // The top and door walls come away whole: shells, liners, facets, treatments and the door leaves.
-  const wallPart = s.kind === 'shell' || s.kind === 'liner' || s.kind === 'door'
+  const wallPart = s.kind === 'layer' || s.kind === 'door'
   return (wallPart && (s.wall === 'top' || s.wall === door)) || ((s.kind === 'facet' || s.kind === 'treatment') && s.wall === 'top')
 }
 
-function toMesh(s: Solid, color: string, opacity: number, offset: Vector3 | null): Group {
+type Look = { color: string; opacity: number; edge: string }
+
+function toMesh(s: Solid, look: Look, offset: Vector3 | null, clip: Plane[] | null): Group {
   const geo = new BufferGeometry()
   geo.setAttribute('position', new Float32BufferAttribute(s.vertices, 3))
   geo.setIndex(s.indices)
   const mat = new MeshStandardMaterial({
-    color: new Color(color), flatShading: true, side: DoubleSide, roughness: 0.9, metalness: 0,
-    transparent: opacity < 1, opacity, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    color: new Color(look.color), flatShading: true, side: DoubleSide, roughness: 0.9, metalness: 0,
+    transparent: look.opacity < 1, opacity: look.opacity, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    clippingPlanes: clip ?? undefined, clipIntersection: true,
   })
+  const line = new LineBasicMaterial({ color: look.edge, clippingPlanes: clip ?? undefined, clipIntersection: true })
   const g = new Group()
   g.add(new Mesh(geo, mat))
-  g.add(new LineSegments(new EdgesGeometry(geo, 20), new LineBasicMaterial({ color: COLOR.edge })))
+  g.add(new LineSegments(new EdgesGeometry(geo, 20), line))
   if (offset) g.position.copy(offset)
   return g
 }
 
-function solidStyle(s: Solid, highlight?: WallId): [string, number] {
+function solidLook(s: Solid, lib: Library, highlight?: WallId): Look {
+  const edge = s.kind === 'layer' && s.wall === highlight ? COLOR.accent : COLOR.edge
   switch (s.kind) {
-    case 'shell': return [COLOR.shell, 1]
-    case 'liner': return [COLOR.liner, 1]
-    case 'facet': return [s.wall === highlight ? COLOR.accent : COLOR.facet, 1]
-    case 'door': return [COLOR.door, 1]
-    case 'cab': return [COLOR.cab, 0.55]
-    case 'treatment': return [COLOR.treatment, 0.85]
-    default: return [COLOR.facet, 1]
+    case 'layer': {
+      const kind = lib.materials.find((m) => m.id === s.materialId)?.kind
+      return { ...materialSwatch(s.materialId ?? '', kind), edge }
+    }
+    case 'facet': return { color: s.wall === highlight ? COLOR.accent : COLOR.facet, opacity: 1, edge }
+    case 'door': return { color: COLOR.door, opacity: 1, edge }
+    case 'cab': return { color: COLOR.cab, opacity: 0.55, edge }
+    case 'treatment': return { color: COLOR.treatment, opacity: 0.85, edge }
+    default: return { color: COLOR.facet, opacity: 1, edge }
   }
 }
 
@@ -81,6 +88,7 @@ export function View3D({ design, highlight, mode }: Props) {
       el.textContent = '3D view needs WebGL, which is not available here.'
       return
     }
+    renderer.localClippingEnabled = true
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setClearColor(new Color(BG))
     el.appendChild(renderer.domElement)
@@ -147,7 +155,13 @@ export function View3D({ design, highlight, mode }: Props) {
       if (!t) return
       disposeGroup(t.group)
       const door = doorWall(design)
-      for (const s of buildScene(design, library.value).solids) {
+      const lib = library.value
+      const { inner } = resolveDims(design)
+      // Section: clip away the corner where x, y and z are all past the middle (intersection of three half-spaces).
+      const clip = mode === 'section'
+        ? [new Plane(new Vector3(-1, 0, 0), inner.x / 2), new Plane(new Vector3(0, -1, 0), inner.y / 2), new Plane(new Vector3(0, 0, -1), inner.z / 2)]
+        : null
+      for (const s of buildScene(design, lib).solids) {
         if (hidden(s, mode, door)) continue
         let offset: Vector3 | null = null
         if (mode === 'exploded' && s.wall) {
@@ -155,8 +169,7 @@ export function View3D({ design, highlight, mode }: Props) {
           const n = wallNormal(s.wall)
           offset[n] = HIGH.includes(s.wall) ? EXPLODE : -EXPLODE
         }
-        const [color, opacity] = solidStyle(s, highlight)
-        t.group.add(toMesh(s, color, opacity, offset))
+        t.group.add(toMesh(s, solidLook(s, lib, highlight), offset, clip))
       }
       if (!t.fitted) {
         t.fitted = true
@@ -171,23 +184,37 @@ export function View3D({ design, highlight, mode }: Props) {
   return <div ref={host} class="view3d" role="img" aria-label="3D view of the box. Drag to orbit, scroll to zoom." />
 }
 
-const mode3d = signal<Mode3D>('solid')
+const MODES: [Mode3D, string][] = [['solid', 'Solid'], ['section', 'Section'], ['cutaway', 'Cut-away'], ['exploded', 'Exploded']]
 
-/** View3D with its mode control overlaid. */
-export function View3DPanel({ design, highlight }: { design: Design; highlight?: WallId }) {
+/** Wall layer materials in use, for the legend. */
+function usedMaterials(d: Design, lib: Library) {
+  const ids = new Set<string>()
+  for (const w of WALLS) for (const i of wallStack(d, w)) if (i.kind === 'layer') ids.add(i.materialId)
+  return [...ids].map((id) => {
+    const m = lib.materials.find((x) => x.id === id)
+    return { id, name: m?.name ?? 'Missing material', ...materialSwatch(id, m?.kind) }
+  })
+}
+
+/** View3D with its mode control and material legend overlaid. */
+export function View3DPanel({ design, highlight, initial = 'solid' }: { design: Design; highlight?: WallId; initial?: Mode3D }) {
+  const [mode, setMode] = useState<Mode3D>(initial)
+  const mats = usedMaterials(design, library.value)
   return (
     <div class="view view3dpanel">
       <span class="lbl">3D view</span>
       <div class="view3dmode">
-        <Seg
-          label="3D mode"
-          value={mode3d.value}
-          options={[['solid', 'Solid'], ['cutaway', 'Cut-away'], ['exploded', 'Exploded']]}
-          onPick={(m) => (mode3d.value = m)}
-        />
+        <Seg label="3D mode" value={mode} options={MODES} onPick={setMode} />
       </div>
-      <View3D design={design} highlight={highlight} mode={mode3d.value} />
+      <View3D design={design} highlight={highlight} mode={mode} />
+      <ul class="legend3d" aria-label="Wall materials">
+        {mats.map((m) => (
+          <li key={m.id}>
+            <i style={{ background: m.color, opacity: m.opacity }} />
+            {m.name}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
-

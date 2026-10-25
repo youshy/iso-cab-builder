@@ -252,15 +252,7 @@ export function DoorsStep() {
             label="Door type"
             value={d.door.kind}
             options={[['dual', 'Dual doors'], ['wall', 'Whole wall']]}
-            onPick={(v) =>
-              update((x) => {
-                x.door.kind = v
-                // A whole wall is heavy: start from a lift-off hinge when the leaf still has a butt hinge.
-                const lib = library.value
-                const cur = lib.hinges.find((h) => h.id === x.door.outer.hingeTypeId)
-                const lift = lib.hinges.find((h) => h.kind === 'lift-off')
-                if (v === 'wall' && lift && cur?.kind === 'butt') x.door.outer.hingeTypeId = lift.id
-              })}
+            onPick={(v) => update((x) => void (x.door.kind = v))}
           />
         </div>
         <div class="row">

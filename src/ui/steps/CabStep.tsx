@@ -1,3 +1,4 @@
+import { signal } from '@preact/signals'
 import { resolveDims } from '../../geometry/dimensions'
 import { cabFit } from '../../geometry/space'
 import { newCab } from '../../model/defaults'
@@ -7,6 +8,7 @@ import { compareDesign, design, fmtLen, setDimMode, setInnerSource, update } fro
 import { NumberField } from '../NumberField'
 import { Seg } from '../Seg'
 import { SectionView } from '../views/SectionView'
+import { View3DPanel } from '../views/View3D'
 
 const AXES: { key: keyof Vec3; label: string }[] = [
   { key: 'x', label: 'Width' },
@@ -31,6 +33,8 @@ function removeCab(id: string) {
     if (d.sim.cabId === id) d.sim.cabId = d.cabs[0].id
   })
 }
+
+const cabViews = signal<'sections' | 'both' | '3d'>('sections')
 
 function shortText(shortBy: Vec3): string {
   const parts = AXES.filter((a) => shortBy[a.key] > 0).map((a) => `${fmtLen(shortBy[a.key])} ${a.label.toLowerCase()}`)
@@ -238,16 +242,29 @@ export function CabStep() {
           )
         })}
       </aside>
-      <section class="stage">
-        <div class="views">
-          <div class="view">
-            <span class="lbl">Plan section, cut at mid-height</span>
-            <SectionView design={d} view="plan" compare={compareDesign.value} />
-          </div>
-          <div class="view">
-            <span class="lbl">Front section</span>
-            <SectionView design={d} view="front" compare={compareDesign.value} />
-          </div>
+      <section class="stage interiorstage">
+        <div class="viewbar">
+          <Seg
+            label="Views"
+            value={cabViews.value}
+            options={[['sections', 'Sections'], ['both', 'Sections + 3D'], ['3d', '3D']]}
+            onPick={(v) => (cabViews.value = v)}
+          />
+        </div>
+        <div class="views" style={cabViews.value === '3d' ? { gridTemplateColumns: '1fr' } : undefined}>
+          {cabViews.value !== '3d' && (
+            <>
+              <div class="view">
+                <span class="lbl">Plan section, cut at mid-height</span>
+                <SectionView design={d} view="plan" compare={compareDesign.value} />
+              </div>
+              <div class="view">
+                <span class="lbl">Front section</span>
+                <SectionView design={d} view="front" compare={compareDesign.value} />
+              </div>
+            </>
+          )}
+          {cabViews.value !== 'sections' && <View3DPanel design={d} />}
         </div>
       </section>
     </>

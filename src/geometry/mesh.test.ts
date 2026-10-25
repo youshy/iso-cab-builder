@@ -31,9 +31,9 @@ const bounds = (d: Design) => {
 }
 
 describe('buildScene', () => {
-  it('default design: shells for every wall and one cab', () => {
+  it('default design: layers for every wall and one cab', () => {
     const s = buildScene(base())
-    expect(s.solids.filter((x) => x.kind === 'shell').length).toBeGreaterThanOrEqual(5)
+    expect(s.solids.filter((x) => x.kind === 'layer').length).toBeGreaterThanOrEqual(10)
     expect(s.solids.filter((x) => x.kind === 'cab')).toHaveLength(1)
     expect(s.solids.every((x) => x.indices.length === 36 && x.vertices.length === 24)).toBe(true)
   })
@@ -67,7 +67,21 @@ describe('buildScene', () => {
     expect(buildScene(d).solids.some((x) => x.kind === 'facet')).toBe(false)
   })
 
-  it('air gap splits a wall into shell and liner solids with the gap empty', () => {
+  it('each non-door wall gets one solid per layer, nested outward from the inner face', () => {
+    const d = base()
+    const layers = (w: string) => buildScene(d).solids.filter((x) => x.kind === 'layer' && x.wall === w)
+    const xr = (v: number[]) => [Math.min(...v.filter((_, i) => i % 3 === 0)), Math.max(...v.filter((_, i) => i % 3 === 0))]
+    for (const w of ['left', 'right', 'top', 'bottom', 'back']) expect(layers(w)).toHaveLength(2)
+    const [ply, mdf] = layers('left')
+    expect([ply.materialId, ply.part, mdf.materialId, mdf.part]).toEqual(['plywood', 'shell', 'mdf', 'shell'])
+    expect(xr(ply.vertices)).toEqual([-36, -18])
+    expect(xr(mdf.vertices)).toEqual([-18, 0])
+    const { inner } = resolveDims(d)
+    const [rPly] = layers('right')
+    expect(xr(rPly.vertices)).toEqual([inner.x + 18, inner.x + 36])
+  })
+
+  it('air gap splits a wall into shell and liner layers with the gap empty', () => {
     const d = base()
     d.wallDefault = [
       { kind: 'layer', materialId: 'plywood', thickness: 18 },
@@ -75,11 +89,25 @@ describe('buildScene', () => {
       { kind: 'layer', materialId: 'mdf', thickness: 18 },
     ]
     const left = buildScene(d).solids.filter((x) => x.wall === 'left')
-    const shell = left.find((x) => x.kind === 'shell')!
-    const liner = left.find((x) => x.kind === 'liner')!
+    const shell = left.find((x) => x.part === 'shell')!
+    const liner = left.find((x) => x.part === 'liner')!
     const xr = (v: number[]) => [Math.min(...v.filter((_, i) => i % 3 === 0)), Math.max(...v.filter((_, i) => i % 3 === 0))]
+    expect([shell.kind, shell.materialId, liner.kind, liner.materialId]).toEqual(['layer', 'plywood', 'layer', 'mdf'])
     expect(xr(shell.vertices)).toEqual([-66, -48])
     expect(xr(liner.vertices)).toEqual([-18, 0])
+  })
+
+  it('a panel that runs past the cavity is clipped, and an inside panel is left alone', () => {
+    const d = base()
+    const { inner } = resolveDims(d)
+    d.panels.push({
+      id: 'p', normal: 'x', position: 100, u0: 0, u1: inner.y + 500, v0: -40, v1: inner.z,
+      layers: [{ kind: 'layer', materialId: 'plywood', thickness: 18 }], insulation: null,
+    })
+    const p = buildScene(d).solids.find((x) => x.kind === 'panel')!
+    const col = (i: number) => p.vertices.filter((_, k) => k % 3 === i)
+    expect([Math.min(...col(1)), Math.max(...col(1))]).toEqual([0, inner.y])
+    expect([Math.min(...col(2)), Math.max(...col(2))]).toEqual([0, inner.z])
   })
 
   it('inner panels become panel slabs of total layer plus insulation thickness', () => {
@@ -98,6 +126,11 @@ describe('buildScene', () => {
     const d = base()
     d.interior.left = twoFacets()
     d.interior.bottom = { ...twoFacets(), splitAxis: 'x' }
+    d.panels.push({
+      id: 'p', normal: 'z', position: 400, u0: -50, u1: 1e5, v0: 0, v1: 1e5,
+      layers: [{ kind: 'layer', materialId: 'plywood', thickness: 18 }], insulation: { materialId: 'rockwool', thickness: 1e5 },
+    })
+    d.treatments.push({ id: 't', surface: { panelId: 'p', side: 'pos' }, materialId: 'rockwool', thickness: 1e5 })
     const { lo, hi } = bounds(d)
     for (const s of buildScene(d).solids.filter((x) => x.kind !== 'door')) {
       for (let i = 0; i < s.vertices.length; i += 3) {
@@ -118,12 +151,12 @@ describe('buildScene', () => {
     }
     const doorSolids = (d: Design) => buildScene(d).solids.filter((x) => x.kind === 'door')
 
-    it('whole-wall mode: door wall solids are kind door, uncut, and no leaf solids', () => {
+    it('whole-wall mode: door wall layers are uncut, flagged door, and no leaf solids', () => {
       const d = base()
       d.door.kind = 'wall'
       const solids = buildScene(d).solids.filter((x) => x.wall === 'front' && x.kind !== 'treatment')
-      expect(solids.map((x) => x.name)).toEqual(['front-shell'])
-      expect(solids.every((x) => x.kind === 'door')).toBe(true)
+      expect(solids.map((x) => x.name)).toEqual(['front-shell-1', 'front-shell-2'])
+      expect(solids.every((x) => x.kind === 'layer' && x.door === true)).toBe(true)
       expect(buildScene(d).solids.filter((x) => x.name.startsWith('door-'))).toHaveLength(0)
       d.wallDefault = [
         { kind: 'layer', materialId: 'plywood', thickness: 18 },
@@ -131,22 +164,24 @@ describe('buildScene', () => {
         { kind: 'layer', materialId: 'mdf', thickness: 18 },
       ]
       const g = buildScene(d).solids.filter((x) => x.wall === 'front')
-      expect(g.map((x) => x.name).sort()).toEqual(['front-liner', 'front-shell'])
-      expect(g.every((x) => x.kind === 'door')).toBe(true)
+      expect(g.map((x) => x.name).sort()).toEqual(['front-liner-1', 'front-shell-1'])
+      expect(g.every((x) => x.kind === 'layer' && x.door === true)).toBe(true)
     })
 
     it('door wall is cut into boxes around the cutout, other walls stay whole', () => {
       const d = base()
       const solids = buildScene(d).solids
-      expect(solids.filter((x) => x.wall === 'front' && x.kind === 'shell')).toHaveLength(4)
-      expect(solids.filter((x) => x.wall === 'back' && x.kind === 'shell')).toHaveLength(1)
+      expect(solids.filter((x) => x.wall === 'front' && x.kind === 'layer')).toHaveLength(8)
+      expect(solids.filter((x) => x.wall === 'front' && x.kind === 'layer' && x.materialId === 'plywood')).toHaveLength(4)
+      expect(solids.filter((x) => x.wall === 'back' && x.kind === 'layer')).toHaveLength(2)
+      expect(solids.some((x) => x.wall === 'front' && x.door)).toBe(false)
     })
 
     it('cutout area is empty: no wall box covers the wall centre', () => {
       const d = base()
       const { inner } = resolveDims(d)
       const cx = inner.x / 2, cy = inner.y / 2
-      for (const s of buildScene(d).solids.filter((x) => x.wall === 'front' && x.kind === 'shell')) {
+      for (const s of buildScene(d).solids.filter((x) => x.wall === 'front' && x.kind === 'layer')) {
         const [x0, x1] = range(s, 0), [y0, y1] = range(s, 1)
         expect(x0 < cx && cx < x1 && y0 < cy && cy < y1).toBe(false)
       }

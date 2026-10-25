@@ -37,7 +37,7 @@ const inside = (b: Box, p: Vec3) =>
   p.x >= b.min.x && p.x <= b.max.x && p.y >= b.min.y && p.y <= b.max.y && p.z >= b.min.z && p.z <= b.max.z
 
 /** Distance from point to the wall's inner face. */
-function wallDistance(w: WallId, p: Vec3, inner: Vec3): number {
+export function wallDistance(w: WallId, p: Vec3, inner: Vec3): number {
   switch (w) {
     case 'left': return p.x
     case 'right': return inner.x - p.x
