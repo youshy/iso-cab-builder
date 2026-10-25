@@ -10,6 +10,7 @@ import { resolveDims } from '../../geometry/dimensions'
 import { buildScene, type Solid } from '../../geometry/mesh'
 import { wallNormal } from '../../geometry/walls'
 import type { Design, WallId } from '../../model/schema'
+import { library } from '../../model/store'
 import { Seg } from '../Seg'
 
 export type Mode3D = 'solid' | 'cutaway' | 'exploded'
@@ -20,10 +21,13 @@ const REBUILD_DELAY = 50
 const HIGH: WallId[] = ['right', 'top', 'front']
 // Flat greys approximating the token palette (--bg, --line-strong, --ink-3, --accent).
 const BG = '#f7f6f3'
-const COLOR = { shell: '#dedbd5', liner: '#c4c0b8', facet: '#9a968f', accent: '#b45a2c', cab: '#6f6c66', edge: '#5d5a54' }
+const COLOR = { door: '#cdbfa8', shell: '#dedbd5', liner: '#c4c0b8', facet: '#9a968f', accent: '#b45a2c', cab: '#6f6c66', edge: '#5d5a54' }
 
 function hidden(s: Solid, mode: Mode3D, door: WallId): boolean {
-  return mode === 'cutaway' && (s.kind === 'shell' || s.kind === 'liner') && (s.wall === 'top' || s.wall === door)
+  if (mode !== 'cutaway') return false
+  // The top and door walls come away whole: shells, liners, facets and the door leaves.
+  const wallPart = s.kind === 'shell' || s.kind === 'liner' || s.kind === 'door'
+  return (wallPart && (s.wall === 'top' || s.wall === door)) || (s.kind === 'facet' && s.wall === 'top')
 }
 
 function toMesh(s: Solid, color: string, opacity: number, offset: Vector3 | null): Group {
@@ -46,6 +50,7 @@ function solidStyle(s: Solid, highlight?: WallId): [string, number] {
     case 'shell': return [COLOR.shell, 1]
     case 'liner': return [COLOR.liner, 1]
     case 'facet': return [s.wall === highlight ? COLOR.accent : COLOR.facet, 1]
+    case 'door': return [COLOR.door, 1]
     case 'cab': return [COLOR.cab, 0.55]
     default: return [COLOR.facet, 1]
   }
@@ -141,7 +146,7 @@ export function View3D({ design, highlight, mode }: Props) {
       if (!t) return
       disposeGroup(t.group)
       const door = doorWall(design)
-      for (const s of buildScene(design).solids) {
+      for (const s of buildScene(design, library.value).solids) {
         if (hidden(s, mode, door)) continue
         let offset: Vector3 | null = null
         if (mode === 'exploded' && s.wall) {
@@ -160,7 +165,7 @@ export function View3D({ design, highlight, mode }: Props) {
       t.draw()
     }, REBUILD_DELAY)
     return () => clearTimeout(timer)
-  }, [design, highlight, mode])
+  }, [design, highlight, mode, library.value])
 
   return <div ref={host} class="view3d" role="img" aria-label="3D view of the box. Drag to orbit, scroll to zoom." />
 }

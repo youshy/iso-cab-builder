@@ -1,4 +1,5 @@
-import type { Axis, Design, WallId } from '../model/schema'
+import { doorLayout, SPLIT_GAP, type LeafLayout } from '../doors/doors'
+import type { Axis, Design, Library, WallId } from '../model/schema'
 import { resolveDims } from './dimensions'
 import { packingDepth } from './facets'
 import { cabBox } from './space'
@@ -39,6 +40,22 @@ function box(name: string, kind: SolidKind, wall: WallId | undefined, r: Record<
   ], r.z[0], r.z[1])
 }
 
+type Range = [number, number]
+/** A rectangle in the door wall plane: [range along the door's width axis, range along height (y)]. */
+type Rect = [Range, Range]
+
+/** The pieces of `outer` left after cutting `hole` out of it: up to four rectangles. */
+function around(outer: Rect, hole: Rect): Rect[] {
+  const [[w0, w1], [h0, h1]] = outer
+  const cl = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi)
+  const [a0, a1] = [cl(hole[0][0], w0, w1), cl(hole[0][1], w0, w1)]
+  const [b0, b1] = [cl(hole[1][0], h0, h1), cl(hole[1][1], h0, h1)]
+  const pieces: Rect[] = [
+    [[w0, a0], [h0, h1]], [[a1, w1], [h0, h1]], [[a0, a1], [h0, b0]], [[a0, a1], [b1, h1]],
+  ]
+  return pieces.filter(([w, h]) => w[1] - w[0] > 1e-6 && h[1] - h[0] > 1e-6)
+}
+
 const otherAxes = (n: Axis): [Axis, Axis] => AXES.filter((a) => a !== n) as [Axis, Axis]
 
 /**
@@ -46,8 +63,21 @@ const otherAxes = (n: Axis): [Axis, Axis] => AXES.filter((a) => a !== n) as [Axi
  * back-bottom-left corner, front = +z). Left/right walls span the full outer y and z,
  * top/bottom the inner x and full outer z, back/front the inner x and y, so shells never overlap.
  */
-export function buildScene(d: Design): { solids: Solid[] } {
+export function buildScene(d: Design, lib: Library): { solids: Solid[] } {
   const { inner } = resolveDims(d)
+  const door = doorLayout(d, lib)
+  const side = door.side
+  // The door sits centred in its wall: width along x (front) or z (left/right), height along y.
+  const wAxis: Axis = side === 'front' ? 'x' : 'z'
+  const hAxis: Axis = 'y'
+  const centre = { w: inner[wAxis] / 2, h: inner[hAxis] / 2 }
+  const centred = (size: { w: number; h: number }): Rect => [
+    [centre.w - size.w / 2, centre.w + size.w / 2], [centre.h - size.h / 2, centre.h + size.h / 2],
+  ]
+  const hole = centred({
+    w: Math.max(door.outer.cutout.w, door.inner.cutout.w),
+    h: Math.max(door.outer.cutout.h, door.inner.cutout.h),
+  })
   const solids: Solid[] = []
   const thick = (w: WallId) => stackThickness(wallStack(d, w))
   const lowT = (a: Axis) => thick(a === 'x' ? 'left' : a === 'y' ? 'bottom' : 'back')
@@ -73,9 +103,18 @@ export function buildScene(d: Design): { solids: Solid[] } {
       high ? [inner[n] + from, inner[n] + to] : [0 - to, 0 - from]
     const make = (kind: 'shell' | 'liner', from: number, to: number) => {
       if (to - from <= 0) return
-      solids.push(box(`${w}-${kind}`, kind, w, {
-        [n]: range(from, to), [u]: extent(w, u), [v]: extent(w, v),
-      } as Record<Axis, [number, number]>))
+      if (w !== side) {
+        solids.push(box(`${w}-${kind}`, kind, w, {
+          [n]: range(from, to), [u]: extent(w, u), [v]: extent(w, v),
+        } as Record<Axis, [number, number]>))
+        return
+      }
+      // Door wall: boxes around the cutout.
+      around([extent(w, wAxis), extent(w, hAxis)], hole).forEach(([rw, rh], i, all) => {
+        solids.push(box(all.length > 1 ? `${w}-${kind}-${i + 1}` : `${w}-${kind}`, kind, w, {
+          [n]: range(from, to), [wAxis]: rw, [hAxis]: rh,
+        } as Record<Axis, [number, number]>))
+      })
     }
     make('shell', total - tShell, total)
     if (gap) make('liner', 0, tLiner)
@@ -108,6 +147,8 @@ export function buildScene(d: Design): { solids: Solid[] } {
     } as Record<Axis, [number, number]>))
   })
 
+  addDoors(solids, d, door, { wAxis, hAxis, centred, inner })
+
   const cab = d.sim.cabId === '' ? undefined : d.cabs.find((c) => c.id === d.sim.cabId)
   if (cab) {
     const b = cabBox(d, cab)
@@ -116,4 +157,45 @@ export function buildScene(d: Design): { solids: Solid[] } {
     }))
   }
   return { solids }
+}
+
+type DoorFrame = {
+  wAxis: Axis
+  hAxis: Axis
+  centred: (size: { w: number; h: number }) => Rect
+  inner: Record<Axis, number>
+}
+
+/** Leaf slabs (outer face-mounted outside the wall, inner inset at the inner face) and frame strips. */
+function addDoors(solids: Solid[], d: Design, door: ReturnType<typeof doorLayout>, f: DoorFrame) {
+  const side = door.side
+  const n = wallNormal(side)
+  const high = HIGH.includes(side)
+  const total = stackThickness(wallStack(d, side))
+  // Distance outward from the inner face, as a coordinate along the wall normal.
+  const range = (from: number, to: number): Range =>
+    high ? [f.inner[n] + from, f.inner[n] + to] : [0 - to, 0 - from]
+  const put = (name: string, r: Rect, from: number, to: number) =>
+    solids.push(box(name, 'door', side, { [n]: range(from, to), [f.wAxis]: r[0], [f.hAxis]: r[1] } as Record<Axis, Range>))
+
+  const place = (leaf: LeafLayout) => {
+    const t = leaf.leaves[0].t
+    const [from, to] = leaf.which === 'outer' ? [total, total + t] : [0, t]
+    const isSplit = leaf.leaves.length === 2
+    const w = leaf.leaves.reduce((s, l) => s + l.w, 0) + (isSplit ? SPLIT_GAP : 0)
+    const [wr, hr] = f.centred({ w, h: leaf.leaves[0].h })
+    if (!isSplit) put(`door-${leaf.which}`, [wr, hr], from, to)
+    else {
+      const half = leaf.leaves[0].w
+      put(`door-${leaf.which}-1`, [[wr[0], wr[0] + half], hr], from, to)
+      put(`door-${leaf.which}-2`, [[wr[1] - half, wr[1]], hr], from, to)
+    }
+    if (leaf.frame) {
+      const [fFrom, fTo] = leaf.which === 'outer' ? [total - leaf.frame.depth, total] : [0, leaf.frame.depth]
+      around(f.centred(leaf.cutout), f.centred(leaf.opening)).forEach((r, i) =>
+        put(`door-${leaf.which}-frame-${i + 1}`, r, fFrom, fTo))
+    }
+  }
+  place(door.outer)
+  place(door.inner)
 }

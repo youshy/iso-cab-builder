@@ -4,6 +4,7 @@ import { TopBar } from './TopBar';
 import { CabStep } from './steps/CabStep';
 import { WallsStep } from './steps/WallsStep';
 import { InteriorStep } from './steps/InteriorStep';
+import { DoorsStep } from './steps/DoorsStep';
 import { MaterialLibrary, libraryOpen } from './library/MaterialLibrary';
 import { editError } from '../model/store';
 
@@ -25,6 +26,8 @@ export function App() {
           <WallsStep />
         ) : step === 'interior' ? (
           <InteriorStep />
+        ) : step === 'doors' ? (
+          <DoorsStep />
         ) : (
           <>
             <aside>

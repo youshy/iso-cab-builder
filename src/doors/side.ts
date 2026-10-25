@@ -14,3 +14,15 @@ export function autoDoorSide(d: Design): DoorSide {
 export function doorWall(d: Design): WallId {
   return d.door.side === 'auto' ? autoDoorSide(d) : d.door.side
 }
+
+/** Axis a door's width runs along: x on the front wall, z on the left and right walls. Height is always y. */
+export const doorWidthAxis = (side: DoorSide): 'x' | 'z' => (side === 'front' ? 'x' : 'z')
+
+/**
+ * Which end of the width axis a leaf edge named "left" or "right" lies on, seen from outside the box
+ * looking at the door. Left wall: left is toward the back. Right wall: left is toward the front.
+ */
+export function widthEdgeEnd(side: DoorSide, edge: 'left' | 'right'): 'min' | 'max' {
+  const leftIsMin = side !== 'right'
+  return (edge === 'left') === leftIsMin ? 'min' : 'max'
+}

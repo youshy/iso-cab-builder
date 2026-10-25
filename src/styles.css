@@ -176,3 +176,15 @@ aside.interiorside summary .unit{font-weight:400;margin-left:6px}
 .view3d{flex:1;min-height:0;width:100%;overflow:hidden}
 .view3dmode{position:absolute;top:6px;right:8px;z-index:1}
 .view3dpanel .lbl{z-index:1}
+/* doors step */
+.section .sv-leaf{fill:var(--panel);stroke:var(--ink);stroke-width:1.5;vector-effect:non-scaling-stroke}
+.section .sv-leaf.inner{fill:var(--line)}
+.section .sv-swing{stroke:var(--ink-2);stroke-width:1.5;stroke-dasharray:5 4;vector-effect:non-scaling-stroke}
+.section .sv-swing.inner{stroke:var(--ink-3)}
+aside.doorside .panels{display:grid;gap:8px}
+aside.doorside .card h4{margin:0 0 6px;font-size:13px}
+aside.doorside .results{margin:6px 0 0;padding:0;list-style:none;font-size:12.5px}
+aside.doorside .results li{padding:2px 0;border-bottom:1px solid var(--line)}
+aside.doorside .results .k{color:var(--ink-2);display:inline-block;min-width:92px}
+aside.doorside .collisions p{margin:2px 0}
+.doorstage{grid-template-rows:auto 1fr}

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { defaultDesign } from '../model/defaults'
+import { defaultDesign, defaultLibrary } from '../model/defaults'
 import type { Design, WallInterior } from '../model/schema'
 import { resolveDims } from './dimensions'
-import { buildScene } from './mesh'
+import { buildScene as scene } from './mesh'
 import { stackThickness, wallStack } from './walls'
 
+const lib = defaultLibrary()
+const buildScene = (d: Design) => scene(d, lib)
 const base = (): Design => {
   const d = structuredClone(defaultDesign())
   d.door.side = 'front'
@@ -97,7 +99,7 @@ describe('buildScene', () => {
     d.interior.left = twoFacets()
     d.interior.bottom = { ...twoFacets(), splitAxis: 'x' }
     const { lo, hi } = bounds(d)
-    for (const s of buildScene(d).solids) {
+    for (const s of buildScene(d).solids.filter((x) => x.kind !== 'door')) {
       for (let i = 0; i < s.vertices.length; i += 3) {
         expect(s.vertices[i]).toBeGreaterThanOrEqual(lo - 1e-6)
         expect(s.vertices[i]).toBeLessThanOrEqual(hi.x + 1e-6)
@@ -107,5 +109,65 @@ describe('buildScene', () => {
         expect(s.vertices[i + 2]).toBeLessThanOrEqual(hi.z + 1e-6)
       }
     }
+  })
+
+  describe('doors', () => {
+    const range = (s: { vertices: number[] }, axis: 0 | 1 | 2): [number, number] => {
+      const v = s.vertices.filter((_, i) => i % 3 === axis)
+      return [Math.min(...v), Math.max(...v)]
+    }
+    const doorSolids = (d: Design) => buildScene(d).solids.filter((x) => x.kind === 'door')
+
+    it('door wall is cut into boxes around the cutout, other walls stay whole', () => {
+      const d = base()
+      const solids = buildScene(d).solids
+      expect(solids.filter((x) => x.wall === 'front' && x.kind === 'shell')).toHaveLength(4)
+      expect(solids.filter((x) => x.wall === 'back' && x.kind === 'shell')).toHaveLength(1)
+    })
+
+    it('cutout area is empty: no wall box covers the wall centre', () => {
+      const d = base()
+      const { inner } = resolveDims(d)
+      const cx = inner.x / 2, cy = inner.y / 2
+      for (const s of buildScene(d).solids.filter((x) => x.wall === 'front' && x.kind === 'shell')) {
+        const [x0, x1] = range(s, 0), [y0, y1] = range(s, 1)
+        expect(x0 < cx && cx < x1 && y0 < cy && cy < y1).toBe(false)
+      }
+    })
+
+    it('outer leaf sits outside the wall, inner leaf at the inner face, both leaf thickness', () => {
+      const d = base() // front door, 18 mm ply outer, 18 mm MDF inner
+      const { inner } = resolveDims(d)
+      const t = stackThickness(wallStack(d, 'front'))
+      const [outer, innerLeaf] = [
+        doorSolids(d).find((x) => x.name === 'door-outer')!,
+        doorSolids(d).find((x) => x.name === 'door-inner')!,
+      ]
+      expect(range(outer, 2)).toEqual([inner.z + t, inner.z + t + 18])
+      expect(range(innerLeaf, 2)).toEqual([inner.z, inner.z + 18])
+    })
+
+    it('left wall door: leaf thickness runs along x on the low side', () => {
+      const d = defaultDesign()
+      d.door.side = 'left'
+      const { inner } = resolveDims(d)
+      const outer = doorSolids(d).find((x) => x.name === 'door-outer')!
+      expect(range(outer, 0)).toEqual([-36 - 18, -36])
+      expect(range(outer, 2)).toEqual([inner.z / 2 - 220, inner.z / 2 + 220])
+    })
+
+    it('split leaf gives two solids, all tagged with the door wall', () => {
+      const d = base()
+      d.door.outer.opening = 'split'
+      const outers = doorSolids(d).filter((x) => x.name.startsWith('door-outer-') && !x.name.includes('frame'))
+      expect(outers).toHaveLength(2)
+      expect(doorSolids(d).every((x) => x.wall === 'front')).toBe(true)
+    })
+
+    it('framed door adds frame strips', () => {
+      const d = base()
+      d.door.outer.framed = true
+      expect(doorSolids(d).filter((x) => x.name.startsWith('door-outer-frame'))).toHaveLength(4)
+    })
   })
 })

@@ -2,7 +2,8 @@ import { resolveDims } from '../../geometry/dimensions'
 import { facetOffsetAt } from '../../geometry/facets'
 import { cabBox } from '../../geometry/space'
 import { activeInterior, stackThickness, wallNormal, wallStack, WALLS } from '../../geometry/walls'
-import { doorWall } from '../../doors/side'
+import { SPLIT_GAP, type DoorLayout, type LeafLayout } from '../../doors/doors'
+import { doorWall, doorWidthAxis, widthEdgeEnd } from '../../doors/side'
 import type { Axis, Design, Vec3, WallId } from '../../model/schema'
 
 type View = 'plan' | 'front' | 'side'
@@ -15,6 +16,8 @@ type Props = {
   exaggerate?: boolean
   /** Called with the wall under a click; walls then show a pointer cursor. */
   onSelectWall?: (w: WallId) => void
+  /** Draws the door leaves and their swing arcs. */
+  doors?: DoorLayout | null
 }
 
 /** Horizontal and vertical world axes shown by each view; the third axis is cut at its middle. */
@@ -24,7 +27,7 @@ export const DEPTH_EXAGGERATION = 2.4
 
 type R = { x: number; y: number; width: number; height: number }
 
-export function SectionView({ design: d, view, highlight, compare, exaggerate, onSelectWall }: Props) {
+export function SectionView({ design: d, view, highlight, compare, exaggerate, onSelectWall, doors }: Props) {
   const [ha, va] = AXES[view]
   const cut = (['x', 'y', 'z'] as Axis[]).find((a) => a !== ha && a !== va)!
   const k = (a: Axis) => (exaggerate && view === 'plan' && a === 'z' ? DEPTH_EXAGGERATION : 1)
@@ -45,9 +48,67 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
   const outerRect = (dd: Design, innerSize: Vec3) =>
     rect(-lo(dd, ha), innerSize[ha] + hi(dd, ha), -lo(dd, va), innerSize[va] + hi(dd, va))
 
+  /** Extents of a leaf along a world axis: halves for a split leaf's width, one range otherwise, null off the door plane. */
+  function leafSegs(l: LeafLayout, axis: Axis, side: DoorLayout['side']): [number, number][] | null {
+    const c = inner[axis] / 2
+    if (axis === 'y') return [[c - l.leaves[0].h / 2, c + l.leaves[0].h / 2]]
+    if (axis !== doorWidthAxis(side)) return null
+    if (l.leaves.length === 1) return [[c - l.leaves[0].w / 2, c + l.leaves[0].w / 2]]
+    const half = l.leaves[0].w
+    return [[c - half - SPLIT_GAP / 2, c - SPLIT_GAP / 2], [c + SPLIT_GAP / 2, c + half + SPLIT_GAP / 2]]
+  }
+
+  /** Leaves as slabs (door wall edge-on) or face-on rectangles, with dashed quarter-circle swing arcs. */
+  function doorLeafEls(dl: DoorLayout, reach: R[]): preact.JSX.Element[] {
+    const dw = dl.side
+    const dn = wallNormal(dw)
+    const els: preact.JSX.Element[] = []
+    if (dn !== ha && dn !== va) {
+      for (const l of [dl.inner, dl.outer]) {
+        const hs = leafSegs(l, ha, dw), vs = leafSegs(l, va, dw)
+        if (!hs || !vs) continue
+        for (const [h0, h1] of hs) for (const [v0, v1] of vs) {
+          els.push(<rect key={`${l.which}${h0}`} {...rect(h0, h1, v0, v1)} class={`sv-leaf ${l.which}`}><title>{`${l.which} door leaf`}</title></rect>)
+        }
+      }
+      return els
+    }
+    const isMin = MIN_WALLS.includes(dw)
+    const out = isMin ? -1 : 1
+    const al = dn === ha ? va : ha
+    const t = thick(d, dw)
+    const faces = { outer: isMin ? -t : inner[dn] + t, inner: isMin ? 0 : inner[dn] }
+    const at = (nPos: number, alPos: number): [number, number] => (dn === ha ? pt(nPos, alPos) : pt(alPos, nPos))
+    for (const l of [dl.inner, dl.outer]) {
+      const segs = leafSegs(l, al, dw)
+      if (!segs) continue
+      const n0 = faces[l.which], n1 = n0 + out * l.leaves[0].t
+      segs.forEach(([a0, a1], i) => {
+        const r = dn === ha ? rect(Math.min(n0, n1), Math.max(n0, n1), a0, a1) : rect(a0, a1, Math.min(n0, n1), Math.max(n0, n1))
+        els.push(<rect key={`${l.which}${i}`} {...r} class={`sv-leaf ${l.which}`}><title>{`${l.which} door leaf`}</title></rect>)
+        // Hinge end along the view's door-plane axis; arcs only show when the hinge axis lies in this view.
+        const edge = l.leaves.length === 2 && al === doorWidthAxis(dw) ? (i === 0 ? 'min' : 'max') : hingeEnd(dw, l, al)
+        if (!edge) return
+        const hingeAt = edge === 'min' ? a0 : a1
+        const dir = edge === 'min' ? 1 : -1
+        const mid = (n0 + n1) / 2
+        const swing = l.direction === 'out' ? out : -out
+        const pts = Array.from({ length: 10 }, (_, k) => {
+          const th = (k / 9) * (Math.PI / 2)
+          return at(mid + swing * l.swingRadius * Math.sin(th), hingeAt + dir * l.swingRadius * Math.cos(th))
+        })
+        for (const [x, y] of pts) reach.push({ x, y, width: 0, height: 0 })
+        els.push(<polyline key={`arc${l.which}${i}`} points={pts.map((q) => q.join(',')).join(' ')} class={`sv-swing ${l.which}`} fill="none"><title>{`${l.which} door swing`}</title></polyline>)
+      })
+    }
+    return els
+  }
+
+  const arcReach: R[] = []
+  const leafEls = doors ? doorLeafEls(doors, arcReach) : []
   const outer = outerRect(d, inner)
   const cmp = compare ? outerRect(compare, resolveDims(compare).inner) : null
-  const bounds = [outer, ...(cmp ? [cmp] : [])]
+  const bounds = [outer, ...(cmp ? [cmp] : []), ...arcReach]
   const minX = Math.min(...bounds.map((b) => b.x)), minY = Math.min(...bounds.map((b) => b.y))
   const maxX = Math.max(...bounds.map((b) => b.x + b.width)), maxY = Math.max(...bounds.map((b) => b.y + b.height))
   const pad = Math.max(maxX - minX, maxY - minY) * 0.06
@@ -193,6 +254,15 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
       <rect {...cabRect} class="sv-cab" />
       {cmp && <rect {...cmp} class="sv-compare" />}
       {door}
+      {leafEls}
     </svg>
   )
+}
+
+/** End of the leaf's hinge edge along `axis` (world), or null when the hinge runs across that axis. */
+function hingeEnd(side: DoorLayout['side'], l: LeafLayout, axis: Axis): 'min' | 'max' | null {
+  const edge = l.hinges[0].edge
+  if (edge === 'top') return axis === 'y' ? 'max' : null
+  if (edge === 'bottom') return axis === 'y' ? 'min' : null
+  return axis === doorWidthAxis(side) ? widthEdgeEnd(side, edge as 'left' | 'right') : null
 }
