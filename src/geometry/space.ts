@@ -1,18 +1,18 @@
 import { doorWall } from '../doors/side'
 import type { Axis, Cab, Design, Vec3, WallId } from '../model/schema'
 import { resolveDims } from './dimensions'
-import { facetOffsetAt, maxIntrusion } from './facets'
+import { panelExtent, surfaceOffsetAt, wallIntrusion } from './treatments'
 import { activeInterior, oppositeWall, WALLS } from './walls'
 
 export type Box = { min: Vec3; max: Vec3 }
 
 export function cabBox(d: Design, cab: Cab): Box {
   const { inner } = resolveDims(d)
-  const lo = maxIntrusion(activeInterior(d, 'left'))
-  const hi = inner.x - maxIntrusion(activeInterior(d, 'right'))
+  const lo = wallIntrusion(d, 'left')
+  const hi = inner.x - wallIntrusion(d, 'right')
   const x0 = (lo + hi) / 2 - cab.w / 2
-  const y0 = maxIntrusion(activeInterior(d, 'bottom'))
-  const z0 = maxIntrusion(activeInterior(d, 'back')) + d.dims.clearance
+  const y0 = wallIntrusion(d, 'bottom')
+  const z0 = wallIntrusion(d, 'back') + d.dims.clearance
   return {
     min: { x: x0, y: y0, z: z0 },
     max: { x: x0 + cab.w, y: y0 + cab.h, z: z0 + cab.d },
@@ -56,7 +56,7 @@ export function isAir(d: Design, p: Vec3): boolean {
 
   for (const w of WALLS) {
     const wi = activeInterior(d, w)
-    if (wi && wallDistance(w, p, inner) < facetOffsetAt(wi, p[wi.splitAxis])) return false
+    if (wallDistance(w, p, inner) < surfaceOffsetAt(d, w, wi ? p[wi.splitAxis] : 0)) return false
   }
 
   if (d.sim.cabId !== '') {
@@ -65,12 +65,11 @@ export function isAir(d: Design, p: Vec3): boolean {
   }
 
   for (const panel of d.panels) {
-    const thick =
-      panel.layers.reduce((a, l) => a + l.thickness, 0) + (panel.insulation?.thickness ?? 0)
+    const { lo, hi } = panelExtent(d, panel)
     const [u, v] = otherAxes(panel.normal)
     if (
-      p[panel.normal] >= panel.position &&
-      p[panel.normal] <= panel.position + thick &&
+      p[panel.normal] >= lo &&
+      p[panel.normal] <= hi &&
       p[u] >= panel.u0 && p[u] <= panel.u1 &&
       p[v] >= panel.v0 && p[v] <= panel.v1
     ) return false

@@ -1,6 +1,7 @@
 import { resolveDims } from '../../geometry/dimensions'
 import { facetOffsetAt } from '../../geometry/facets'
 import { cabBox } from '../../geometry/space'
+import { panelExtent, panelTreatments, wallTreatments } from '../../geometry/treatments'
 import { activeInterior, stackThickness, wallNormal, wallStack, WALLS } from '../../geometry/walls'
 import { SPLIT_GAP, type DoorLayout, type LeafLayout } from '../../doors/doors'
 import { doorWall, doorWidthAxis, widthEdgeEnd } from '../../doors/side'
@@ -119,6 +120,8 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
   const hatchId = `hatch-${view}`
   const shellEls: preact.JSX.Element[] = []
   const facetEls: preact.JSX.Element[] = []
+  const treatEls: preact.JSX.Element[] = []
+  const treatId = `treat-${view}`
 
   // Shell: every wall whose normal is on a view axis, drawn as bands outside-in.
   for (const w of WALLS) {
@@ -145,13 +148,12 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
       )
     })
 
-    // Facets for this wall.
+    // Facets and treatments for this wall.
     const wi = activeInterior(d, w)
-    if (!wi) continue
     const offsetAt = (alongPos: number) =>
-      facetOffsetAt(wi, wi.splitAxis === along ? alongPos : inner[wi.splitAxis] / 2)
+      wi ? facetOffsetAt(wi, wi.splitAxis === along ? alongPos : inner[wi.splitAxis] / 2) : 0
     const samples: number[] = [0]
-    if (wi.splitAxis === along) {
+    if (wi && wi.splitAxis === along) {
       let c = 0
       for (const f of wi.facets.slice(0, -1)) {
         c += f.width
@@ -159,6 +161,24 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
       }
     }
     samples.push(inner[along])
+    // Treatment bands follow the facet face, stacked outwards from it.
+    let below = 0
+    wallTreatments(d, w).forEach((t, i) => {
+      const edge = (s: number, extra: number): [number, number] => {
+        const o = offsetAt(s) + extra
+        const nPos = isMin ? o : inner[n] - o
+        return n === ha ? pt(nPos, s) : pt(s, nPos)
+      }
+      const top = below + t.thickness
+      const band = [...samples.map((s) => edge(s, below)), ...[...samples].reverse().map((s) => edge(s, top))]
+      treatEls.push(
+        <polygon key={`tr${w}${i}`} points={band.map((q) => q.join(',')).join(' ')} class="sv-treat" fill={`url(#${treatId})`}>
+          <title>{`Acoustic treatment, ${w} wall, ${t.thickness} mm`}</title>
+        </polygon>,
+      )
+      below = top
+    })
+    if (!wi) continue
     const face = samples.map((s) => {
       const o = offsetAt(s)
       const nPos = isMin ? o : inner[n] - o
@@ -193,15 +213,28 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
   // Inner panels: box on world axes, shown when the cut passes through it.
   const panelEls: preact.JSX.Element[] = []
   for (const p of d.panels) {
-    const t = p.layers.reduce((a, l) => a + l.thickness, 0) + (p.insulation?.thickness ?? 0)
+    const e = panelExtent(d, p)
     const [u, v] = (['x', 'y', 'z'] as Axis[]).filter((a) => a !== p.normal)
     const range: Record<Axis, [number, number]> = { x: [0, 0], y: [0, 0], z: [0, 0] }
-    range[p.normal] = [p.position, p.position + t]
     range[u] = [p.u0, p.u1]
     range[v] = [p.v0, p.v1]
     const mid = inner[cut] / 2
-    if (mid < range[cut][0] || mid > range[cut][1]) continue
-    panelEls.push(<rect key={p.id} {...rect(...range[ha], ...range[va])} class="sv-panel"><title>Inner panel</title></rect>)
+    const slab = { ...range, [p.normal]: [e.slabLo, e.slabHi] } as Record<Axis, [number, number]>
+    if (mid < slab[cut][0] || mid > slab[cut][1]) continue
+    panelEls.push(<rect key={p.id} {...rect(...slab[ha], ...slab[va])} class="sv-panel"><title>Inner panel</title></rect>)
+    for (const side of ['neg', 'pos'] as const) {
+      let from = side === 'neg' ? e.slabLo : e.slabHi
+      panelTreatments(d, p.id, side).forEach((t, i) => {
+        const to = side === 'neg' ? from - t.thickness : from + t.thickness
+        const r = { ...range, [p.normal]: [Math.min(from, to), Math.max(from, to)] } as Record<Axis, [number, number]>
+        treatEls.push(
+          <rect key={`pt${p.id}${side}${i}`} {...rect(...r[ha], ...r[va])} class="sv-treat" fill={`url(#${treatId})`}>
+            <title>{`Acoustic treatment, ${t.thickness} mm`}</title>
+          </rect>,
+        )
+        from = to
+      })
+    }
   }
 
   // Cab (sizing cab), dashed.
@@ -245,12 +278,17 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
           <rect width="12" height="12" class="sv-gap-bg" />
           <line x1="0" y1="0" x2="0" y2="12" class="sv-hatch" />
         </pattern>
+        <pattern id={treatId} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+          <rect width="8" height="8" class="sv-treat-bg" />
+          <line x1="0" y1="0" x2="0" y2="8" class="sv-treat-hatch" />
+        </pattern>
       </defs>
       <rect {...outer} class="sv-outer" />
       <rect {...rect(0, inner[ha], 0, inner[va])} class="sv-inner" />
       {shellEls}
       {facetEls}
       {panelEls}
+      {treatEls}
       <rect {...cabRect} class="sv-cab" />
       {cmp && <rect {...cmp} class="sv-compare" />}
       {door}

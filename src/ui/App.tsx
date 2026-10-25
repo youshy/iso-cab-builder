@@ -6,7 +6,7 @@ import { WallsStep } from './steps/WallsStep';
 import { InteriorStep } from './steps/InteriorStep';
 import { DoorsStep } from './steps/DoorsStep';
 import { MaterialLibrary, libraryOpen } from './library/MaterialLibrary';
-import { editError } from '../model/store';
+import { design, editError } from '../model/store';
 
 export function App() {
   const [step, setStep] = useState<StepId>('cab');
@@ -43,7 +43,7 @@ export function App() {
       <footer class="modes">
         <div class="status">Simulation not run yet</div>
         <div class="mlist num" />
-        <div class="legend" />
+        <div class="legend">{design.value.treatments.length > 0 && <span><i class="sw-treat" />Acoustic treatment</span>}</div>
       </footer>
     </>
   );

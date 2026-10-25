@@ -21,13 +21,13 @@ const REBUILD_DELAY = 50
 const HIGH: WallId[] = ['right', 'top', 'front']
 // Flat greys approximating the token palette (--bg, --line-strong, --ink-3, --accent).
 const BG = '#f7f6f3'
-const COLOR = { door: '#cdbfa8', shell: '#dedbd5', liner: '#c4c0b8', facet: '#9a968f', accent: '#b45a2c', cab: '#6f6c66', edge: '#5d5a54' }
+const COLOR = { door: '#cdbfa8', shell: '#dedbd5', liner: '#c4c0b8', facet: '#9a968f', accent: '#b45a2c', cab: '#6f6c66', treatment: '#c9bfae', edge: '#5d5a54' }
 
 function hidden(s: Solid, mode: Mode3D, door: WallId): boolean {
   if (mode !== 'cutaway') return false
-  // The top and door walls come away whole: shells, liners, facets and the door leaves.
+  // The top and door walls come away whole: shells, liners, facets, treatments and the door leaves.
   const wallPart = s.kind === 'shell' || s.kind === 'liner' || s.kind === 'door'
-  return (wallPart && (s.wall === 'top' || s.wall === door)) || (s.kind === 'facet' && s.wall === 'top')
+  return (wallPart && (s.wall === 'top' || s.wall === door)) || ((s.kind === 'facet' || s.kind === 'treatment') && s.wall === 'top')
 }
 
 function toMesh(s: Solid, color: string, opacity: number, offset: Vector3 | null): Group {
@@ -52,6 +52,7 @@ function solidStyle(s: Solid, highlight?: WallId): [string, number] {
     case 'facet': return [s.wall === highlight ? COLOR.accent : COLOR.facet, 1]
     case 'door': return [COLOR.door, 1]
     case 'cab': return [COLOR.cab, 0.55]
+    case 'treatment': return [COLOR.treatment, 0.85]
     default: return [COLOR.facet, 1]
   }
 }

@@ -3,9 +3,10 @@ import type { Axis, Design, Library, WallId } from '../model/schema'
 import { resolveDims } from './dimensions'
 import { packingDepth } from './facets'
 import { cabBox } from './space'
+import { panelExtent, panelTreatments, wallTreatments } from './treatments'
 import { activeInterior, splitStack, stackThickness, wallNormal, wallPlaneAxes, wallStack, WALLS } from './walls'
 
-export type SolidKind = 'shell' | 'liner' | 'facet' | 'panel' | 'cab' | 'door'
+export type SolidKind = 'shell' | 'liner' | 'facet' | 'panel' | 'cab' | 'door' | 'treatment'
 export type Solid = { name: string; kind: SolidKind; wall?: WallId; vertices: number[]; indices: number[] }
 
 const AXES: Axis[] = ['x', 'y', 'z']
@@ -139,12 +140,58 @@ export function buildScene(d: Design, lib: Library): { solids: Solid[] } {
     })
   }
 
+  // Wall treatments lie on the innermost face (the facet face where the wall has facets), stacked in list order.
+  for (const w of WALLS) {
+    const layers = wallTreatments(d, w)
+    if (layers.length === 0) continue
+    const wi = activeInterior(d, w)
+    const n = wallNormal(w)
+    const high = HIGH.includes(w)
+    const at = (off: number) => (high ? inner[n] - off : off)
+    const [u, v] = wallPlaneAxes(w)
+    let below = 0
+    layers.forEach((t, k) => {
+      const name = `${w}-treatment-${k + 1}`
+      const top = below + t.thickness
+      if (!wi) {
+        solids.push(box(name, 'treatment', w, {
+          [n]: [Math.min(at(below), at(top)), Math.max(at(below), at(top))], [u]: [0, inner[u]], [v]: [0, inner[v]],
+        } as Record<Axis, [number, number]>))
+      } else {
+        const o = [u, v].find((a) => a !== wi.splitAxis)!
+        let start = 0
+        wi.facets.forEach((f, i) => {
+          const end = Math.min(start + f.width, inner[wi.splitAxis])
+          const [hinge, free] = f.hinge === 'min' ? [start, end] : [end, start]
+          const pd = packingDepth(f) + wi.panelThickness
+          solids.push(prism(`${name}-facet-${i + 1}`, 'treatment', w, [wi.splitAxis, n, o], [
+            [hinge, at(wi.panelThickness + below)], [free, at(pd + below)],
+            [free, at(pd + top)], [hinge, at(wi.panelThickness + top)],
+          ], 0, inner[o]))
+          start = end
+        })
+      }
+      below = top
+    })
+  }
+
   d.panels.forEach((p, i) => {
-    const t = p.layers.reduce((s, l) => s + l.thickness, 0) + (p.insulation?.thickness ?? 0)
+    const e = panelExtent(d, p)
     const [u, v] = otherAxes(p.normal)
+    const ranges = { [u]: [p.u0, p.u1], [v]: [p.v0, p.v1] }
     solids.push(box(`panel-${i + 1}`, 'panel', undefined, {
-      [p.normal]: [p.position, p.position + t], [u]: [p.u0, p.u1], [v]: [p.v0, p.v1],
+      ...ranges, [p.normal]: [e.slabLo, e.slabHi],
     } as Record<Axis, [number, number]>))
+    for (const side of ['neg', 'pos'] as const) {
+      let from = side === 'neg' ? e.slabLo : e.slabHi
+      panelTreatments(d, p.id, side).forEach((t, k) => {
+        const to = side === 'neg' ? from - t.thickness : from + t.thickness
+        solids.push(box(`panel-${i + 1}-treatment-${side}-${k + 1}`, 'treatment', undefined, {
+          ...ranges, [p.normal]: [Math.min(from, to), Math.max(from, to)],
+        } as Record<Axis, [number, number]>))
+        from = to
+      })
+    }
   })
 
   addDoors(solids, d, door, { wAxis, hAxis, centred, inner })

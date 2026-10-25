@@ -1,5 +1,5 @@
-import { maxIntrusion } from './facets'
-import { activeInterior, stackThickness, wallStack } from './walls'
+import { stackThickness, wallStack } from './walls'
+import { wallIntrusion } from './treatments'
 import type { Design, Vec3, WallId } from '../model/schema'
 
 const round1 = (n: number) => Math.round(n * 10) / 10
@@ -22,7 +22,7 @@ export function resolveDims(d: Design): { inner: Vec3; outer: Vec3; free: Vec3; 
 
   for (const [axis, a, b] of PAIRS) {
     const stacks = stackThickness(wallStack(d, a)) + stackThickness(wallStack(d, b))
-    const intrusions = maxIntrusion(activeInterior(d, a)) + maxIntrusion(activeInterior(d, b))
+    const intrusions = wallIntrusion(d, a) + wallIntrusion(d, b)
     let i: number
     if (d.dims.mode === 'outside') {
       i = d.dims.outer[axis] - stacks

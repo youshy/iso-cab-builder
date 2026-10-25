@@ -92,6 +92,10 @@ td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
 .section .sv-hatch{stroke:var(--ink-3);stroke-width:2}
 .section .sv-facet{fill:var(--panel);stroke:var(--ink-2);stroke-width:1;vector-effect:non-scaling-stroke}
 .section .sv-facet.hi{fill:var(--accent-soft);stroke:var(--accent)}
+.section .sv-treat{stroke:var(--ink-2);stroke-width:1;vector-effect:non-scaling-stroke}
+.section .sv-treat-bg{fill:var(--bg)}
+.section .sv-treat-hatch{stroke:var(--ink-3);stroke-width:1.5}
+.legend .sw-treat{display:inline-block;width:14px;height:14px;border:1px solid var(--ink-2);vertical-align:middle;margin-right:6px;background:repeating-linear-gradient(-45deg,var(--ink-3) 0 1px,var(--bg) 1px 4px)}
 .section .sv-panel{fill:var(--line-strong);stroke:var(--ink-2);vector-effect:non-scaling-stroke}
 .section .sv-cab{fill:none;stroke:var(--ink);stroke-width:1.5;stroke-dasharray:6 4;vector-effect:non-scaling-stroke}
 .section .sv-compare{fill:none;stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:6 4;vector-effect:non-scaling-stroke}

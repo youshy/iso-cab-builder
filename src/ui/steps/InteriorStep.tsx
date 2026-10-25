@@ -3,6 +3,7 @@ import { doorWall } from '../../doors/side'
 import { resolveDims } from '../../geometry/dimensions'
 import { widthError } from '../../geometry/facets'
 import { cabFit, cornerFlags, inactiveFacetWarnings } from '../../geometry/space'
+import { inactiveTreatmentWarnings } from '../../geometry/treatments'
 import { wallPlaneAxes, WALLS } from '../../geometry/walls'
 import { DEFAULT_INSULATION, DEFAULT_PANEL_LAYER, materialOrFirst, newId } from '../../model/defaults'
 import {
@@ -326,7 +327,7 @@ function Readout({ d }: { d: Design }) {
   const free = resolveDims(d).free
   const fits = cabFit(d)
   const corners = cornerFlags(d)
-  const warnings = inactiveFacetWarnings(d)
+  const warnings = [...inactiveFacetWarnings(d), ...inactiveTreatmentWarnings(d)]
   return (
     <div class="readout">
       <div class="row">
