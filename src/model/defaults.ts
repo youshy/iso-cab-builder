@@ -131,3 +131,14 @@ export function defaultDesign(): Design {
     sim: { fMax: 1000, cabId: cab.id, probes: [] },
   }
 }
+
+/** Starting choices for new interior parts; the material falls back to the library when missing. */
+export const DEFAULT_FACET_PANEL = { materialId: 'plywood', thickness: 12 }
+export const DEFAULT_PANEL_LAYER = { materialId: 'plywood', thickness: 18 }
+export const DEFAULT_INSULATION = { materialId: 'rockwool', thickness: 50 }
+
+/** The preferred material id when the library has it, else the first library material of a fitting kind. */
+export function materialOrFirst(lib: Library, preferredId: string, kinds: Material['kind'][]): string {
+  if (lib.materials.some((m) => m.id === preferredId)) return preferredId
+  return lib.materials.find((m) => kinds.includes(m.kind))?.id ?? preferredId
+}

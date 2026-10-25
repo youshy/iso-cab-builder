@@ -1,7 +1,8 @@
-import { rebalance, rescale, splitEvenly } from '../geometry/facets'
+import { rebalance, rescale, splitEvenly, widthError } from '../geometry/facets'
 import { resolveDims } from '../geometry/dimensions'
 import { wallPlaneAxes } from '../geometry/walls'
-import type { Axis, Design, Facet, WallId, WallInterior } from './schema'
+import { DEFAULT_FACET_PANEL, materialOrFirst } from './defaults'
+import type { Axis, Design, Facet, Library, WallId, WallInterior } from './schema'
 
 export const MIN_FACET = 10
 export const MAX_FACETS = 8
@@ -10,27 +11,27 @@ export const MAX_FACETS = 8
 export const wallLength = (d: Design, axis: Axis): number => resolveDims(d).inner[axis]
 
 /** A flat interior for an untouched wall, split along its first plane axis unless told otherwise. */
-export function newInterior(d: Design, w: WallId, axis: Axis = wallPlaneAxes(w)[0]): WallInterior {
+export function newInterior(d: Design, w: WallId, lib: Library, axis: Axis = wallPlaneAxes(w)[0]): WallInterior {
   return {
     splitAxis: axis,
     facets: [{ width: wallLength(d, axis), tilt: 0, hinge: 'min' }],
-    panelMaterialId: 'plywood',
-    panelThickness: 12,
+    panelMaterialId: materialOrFirst(lib, DEFAULT_FACET_PANEL.materialId, ['sheet']),
+    panelThickness: DEFAULT_FACET_PANEL.thickness,
     closure: 'fillers',
     behind: 'insulation',
   }
 }
 
 /** Draft edit: the wall's interior, created when missing. */
-export function ensureInterior(d: Design, w: WallId, axis?: Axis): WallInterior {
-  return (d.interior[w] ??= newInterior(d, w, axis))
+export function ensureInterior(d: Design, w: WallId, lib: Library, axis?: Axis): WallInterior {
+  return (d.interior[w] ??= newInterior(d, w, lib, axis))
 }
 
 /** Draft edit: change the split axis, keeping the facet count and re-splitting evenly. */
-export function setSplitAxis(d: Design, w: WallId, axis: Axis): void {
+export function setSplitAxis(d: Design, w: WallId, axis: Axis, lib: Library): void {
   const wi = d.interior[w]
   if (!wi) {
-    ensureInterior(d, w, axis)
+    ensureInterior(d, w, lib, axis)
     return
   }
   if (wi.splitAxis === axis) return
@@ -47,9 +48,9 @@ export function splitWallEvenly(d: Design, w: WallId): void {
 }
 
 /** Draft edit: set the facet count (1 to 8). Adding keeps existing tilts; the last facet is dropped when removing. */
-export function setFacetCount(d: Design, w: WallId, n: number): void {
+export function setFacetCount(d: Design, w: WallId, n: number, lib: Library): void {
   const count = Math.min(MAX_FACETS, Math.max(1, Math.round(n)))
-  const wi = ensureInterior(d, w)
+  const wi = ensureInterior(d, w, lib)
   while (wi.facets.length < count) wi.facets.push({ width: MIN_FACET, tilt: 0, hinge: 'min' })
   wi.facets.length = count
   splitWallEvenly(d, w)
@@ -67,29 +68,33 @@ export function editFacetWidth(facets: Facet[], index: number, width: number, le
 
 /**
  * After an edit, interiors whose wall length changed (e.g. the inner box was resized)
- * get their facets scaled to the new length. Runs until stable because facets also
- * change the inner size in cab-driven mode. Mutates and returns `next`.
+ * get their facets scaled to the new length. Facets also change the inner size in
+ * cab-driven mode, so this repeats until no wall changes. If `maxPasses` is hit, one
+ * last pass scales every unchanged-axis wall to the final dims, so sums match the
+ * dims that pass saw (intrusion drift after it is small but not zero).
+ * Mutates and returns `next`.
  */
-export function rescaleInteriors(prev: Design, next: Design): Design {
+export function rescaleInteriors(prev: Design, next: Design, maxPasses = 8): Design {
+  const walls = Object.keys(next.interior) as WallId[]
+  const sameAxis = new Set(walls.filter((w) => prev.interior[w]?.splitAxis === next.interior[w]!.splitAxis))
   let before = resolveDims(prev).inner
-  const beforeAxis = (w: WallId) => prev.interior[w]?.splitAxis
-  const prevAxes = new Map<WallId, Axis | undefined>(
-    (Object.keys(next.interior) as WallId[]).map((w) => [w, beforeAxis(w)]),
-  )
-  for (let pass = 0; pass < 4; pass++) {
+  for (let pass = 0; pass < maxPasses; pass++) {
     const after = resolveDims(next).inner
     let changed = false
-    for (const w of Object.keys(next.interior) as WallId[]) {
+    for (const w of sameAxis) {
       const wi = next.interior[w]!
-      if (prevAxes.get(w) !== wi.splitAxis) continue
-      const ax = wi.splitAxis
-      if (Math.abs(after[ax] - before[ax]) > 0.05) {
-        wi.facets = rescale(wi.facets, after[ax])
+      if (Math.abs(after[wi.splitAxis] - before[wi.splitAxis]) > 0.05) {
+        wi.facets = rescale(wi.facets, after[wi.splitAxis])
         changed = true
       }
     }
-    if (!changed) break
+    if (!changed) return next
     before = after
+  }
+  const final = resolveDims(next).inner
+  for (const w of sameAxis) {
+    const wi = next.interior[w]!
+    if (Math.abs(widthError(wi.facets, final[wi.splitAxis])) > 0.05) wi.facets = rescale(wi.facets, final[wi.splitAxis])
   }
   return next
 }

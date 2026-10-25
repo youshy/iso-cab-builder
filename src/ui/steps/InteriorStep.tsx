@@ -4,7 +4,7 @@ import { resolveDims } from '../../geometry/dimensions'
 import { widthError } from '../../geometry/facets'
 import { cabFit, cornerFlags, inactiveFacetWarnings } from '../../geometry/space'
 import { wallPlaneAxes, WALLS } from '../../geometry/walls'
-import { newId } from '../../model/defaults'
+import { DEFAULT_INSULATION, DEFAULT_PANEL_LAYER, materialOrFirst, newId } from '../../model/defaults'
 import {
   editFacetWidth, ensureInterior, MAX_FACETS, setFacetCount, setSplitAxis, splitWallEvenly, wallLength,
 } from '../../model/interiorEdit'
@@ -12,7 +12,7 @@ import type { Axis, Design, Facet, InnerPanel, SurfaceRef, Treatment, WallId } f
 import { compareDesign, design, fmtLen, library, update } from '../../model/store'
 import { NumberField } from '../NumberField'
 import { SectionView } from '../views/SectionView'
-import { Seg } from './CabStep'
+import { Seg } from '../Seg'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 const AXIS_NAME: Record<Axis, string> = { x: 'Width', y: 'Height', z: 'Depth' }
@@ -31,6 +31,12 @@ const picked = signal<WallId | null>(null)
 const widthErr = signal<{ wall: WallId; index: number } | null>(null)
 const showFront = signal<'both' | 'plan' | 'front' | 'side'>('both')
 const exaggerate = signal(true)
+
+/** A wall edit; clears the stale width error. */
+const editWall = (fn: (d: Design) => void) => {
+  widthErr.value = null
+  update(fn)
+}
 
 function currentWall(d: Design): WallId {
   const door = doorWall(d)
@@ -70,7 +76,7 @@ function FacetTable({ d, w }: { d: Design; w: WallId }) {
   const len = wallLength(d, wi.splitAxis)
   const [lo, hi] = EDGES[wi.splitAxis]
   const setFacet = (i: number, patch: Partial<Facet>) =>
-    update((x) => void Object.assign(x.interior[w]!.facets[i], patch))
+    editWall((x) => void Object.assign(x.interior[w]!.facets[i], patch))
   const setWidth = (i: number, v: number) => {
     const next = editFacetWidth(wi.facets, i, v, len)
     if (!next) {
@@ -78,7 +84,7 @@ function FacetTable({ d, w }: { d: Design; w: WallId }) {
       return
     }
     widthErr.value = null
-    update((x) => void (x.interior[w]!.facets = next))
+    editWall((x) => void (x.interior[w]!.facets = next))
   }
   const off = widthError(wi.facets, len)
   const err = widthErr.value
@@ -144,7 +150,7 @@ function WallEditor({ d, w }: { d: Design; w: WallId }) {
   const wi = d.interior[w]
   const planeAxes = wallPlaneAxes(w)
   const sheets = library.value.materials.filter((m) => m.kind === 'sheet')
-  const set = (fn: (x: NonNullable<Design['interior'][WallId]>) => void) => update((x) => void fn(ensureInterior(x, w)))
+  const set = (fn: (x: NonNullable<Design['interior'][WallId]>) => void) => editWall((x) => void fn(ensureInterior(x, w, library.value)))
   return (
     <>
       <h3>{cap(w)} wall, inner face</h3>
@@ -156,19 +162,19 @@ function WallEditor({ d, w }: { d: Design; w: WallId }) {
           options={planeAxes.map((a) => [a, AXIS_NAME[a]] as [Axis, string])}
           onPick={(a) => {
             widthErr.value = null
-            update((x) => setSplitAxis(x, w, a))
+            editWall((x) => setSplitAxis(x, w, a, library.value))
           }}
         />
       </div>
       <div class="row">
         <span class="rl">Facets</span>
         <div class="stepper">
-          <button type="button" aria-label="Fewer facets" disabled={!wi || wi.facets.length <= 1} onClick={() => update((x) => setFacetCount(x, w, wi!.facets.length - 1))}>−</button>
+          <button type="button" aria-label="Fewer facets" disabled={!wi || wi.facets.length <= 1} onClick={() => editWall((x) => setFacetCount(x, w, wi!.facets.length - 1, library.value))}>−</button>
           <span class="num" aria-live="polite">{wi?.facets.length ?? 0}</span>
-          <button type="button" aria-label="More facets" disabled={!!wi && wi.facets.length >= MAX_FACETS} onClick={() => update((x) => setFacetCount(x, w, (wi?.facets.length ?? 0) + 1))}>+</button>
+          <button type="button" aria-label="More facets" disabled={!!wi && wi.facets.length >= MAX_FACETS} onClick={() => editWall((x) => setFacetCount(x, w, (wi?.facets.length ?? 0) + 1, library.value))}>+</button>
         </div>
-        <button type="button" class="btn small" disabled={!wi || wi.facets.length < 2} onClick={() => update((x) => splitWallEvenly(x, w))}>Split evenly</button>
-        <button type="button" class="btn small" disabled={!wi} onClick={() => update((x) => void delete x.interior[w])}>Remove facets</button>
+        <button type="button" class="btn small" disabled={!wi || wi.facets.length < 2} onClick={() => editWall((x) => splitWallEvenly(x, w))}>Split evenly</button>
+        <button type="button" class="btn small" disabled={!wi} onClick={() => editWall((x) => void delete x.interior[w])}>Remove facets</button>
       </div>
       {!wi && <p class="hint">This wall is flat. Add a facet to tilt part of it inward.</p>}
       {wi && (
@@ -200,11 +206,21 @@ function WallEditor({ d, w }: { d: Design; w: WallId }) {
 /** Name of the two axes of a panel's plane, in x,y,z order. */
 const planeOf = (normal: Axis): [Axis, Axis] => AXES.filter((a) => a !== normal) as [Axis, Axis]
 
+const newLayer = () => ({
+  kind: 'layer' as const,
+  materialId: materialOrFirst(library.value, DEFAULT_PANEL_LAYER.materialId, ['sheet']),
+  thickness: DEFAULT_PANEL_LAYER.thickness,
+})
+const newInsulation = () => ({
+  materialId: materialOrFirst(library.value, DEFAULT_INSULATION.materialId, ['fill']),
+  thickness: DEFAULT_INSULATION.thickness,
+})
+
 function newPanel(d: Design): InnerPanel {
   const inner = resolveDims(d).inner
   return {
     id: newId(), normal: 'x', position: round1(inner.x / 2), u0: 0, u1: inner.y, v0: 0, v1: inner.z,
-    layers: [{ kind: 'layer', materialId: 'plywood', thickness: 18 }], insulation: null,
+    layers: [newLayer()], insulation: null,
   }
 }
 
@@ -256,9 +272,9 @@ function PanelCard({ p, n }: { p: InnerPanel; n: number }) {
         </div>
       ))}
       <div class="row">
-        <button type="button" class="btn small" onClick={() => edit((q) => void q.layers.push({ kind: 'layer', materialId: 'plywood', thickness: 18 }))}>+ Add layer</button>
+        <button type="button" class="btn small" onClick={() => edit((q) => void q.layers.push(newLayer()))}>+ Add layer</button>
         <label class="field">
-          <input type="checkbox" checked={!!p.insulation} onChange={(e) => edit((q) => (q.insulation = (e.target as HTMLInputElement).checked ? { materialId: fills[0]?.id ?? 'rockwool', thickness: 50 } : null))} />
+          <input type="checkbox" checked={!!p.insulation} onChange={(e) => edit((q) => (q.insulation = (e.target as HTMLInputElement).checked ? newInsulation() : null))} />
           Insulation
         </label>
       </div>
@@ -332,7 +348,10 @@ export function InteriorStep() {
   const w = currentWall(d)
   const door = doorWall(d)
   const pick = (x: WallId) => {
-    if (x !== door) picked.value = x
+    if (x !== door) {
+      picked.value = x
+      widthErr.value = null
+    }
   }
   const free = resolveDims(d).free
   const cmp = compareDesign.value
@@ -346,7 +365,7 @@ export function InteriorStep() {
   )
   return (
     <>
-      <aside>
+      <aside class="interiorside">
         <h3>Pick a wall</h3>
         <WallNet d={d} sel={w} onPick={pick} />
         <p class="hint">Numbers show facets per wall. Click a wall here or in the views.</p>
@@ -361,7 +380,7 @@ export function InteriorStep() {
         <details>
           <summary>Acoustic materials <span class="unit">{d.treatments.length} surfaces treated</span></summary>
           {d.treatments.map((t) => <TreatmentRow key={t.id} t={t} d={d} />)}
-          <button type="button" class="btn small" onClick={() => update((x) => void x.treatments.push({ id: newId(), surface: { wall: 'back' }, materialId: 'rockwool', thickness: 50 }))}>+ Treat a surface</button>
+          <button type="button" class="btn small" onClick={() => update((x) => void x.treatments.push({ id: newId(), surface: { wall: 'back' }, materialId: materialOrFirst(library.value, DEFAULT_INSULATION.materialId, ['fill']), thickness: DEFAULT_INSULATION.thickness }))}>+ Treat a surface</button>
         </details>
       </aside>
       <section class="stage interiorstage">

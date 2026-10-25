@@ -5,6 +5,7 @@ import { applyCabEdit, matchPreset, presetSpeakers, SPEAKER_PRESETS } from '../.
 import type { Cab, Design, Vec3 } from '../../model/schema'
 import { compareDesign, design, fmtLen, setDimMode, setInnerSource, update } from '../../model/store'
 import { NumberField } from '../NumberField'
+import { Seg } from '../Seg'
 import { SectionView } from '../views/SectionView'
 
 const AXES: { key: keyof Vec3; label: string }[] = [
@@ -119,18 +120,6 @@ function CabCard({ cab, fits, many }: { cab: Cab; fits: boolean; many: boolean }
           <option value="open">Open</option>
         </select>
       </div>
-    </div>
-  )
-}
-
-export function Seg<T extends string>({ value, options, onPick, label }: { value: T; options: [T, string][]; onPick: (v: T) => void; label: string }) {
-  return (
-    <div class="seg" role="group" aria-label={label}>
-      {options.map(([v, text]) => (
-        <button type="button" key={v} class={v === value ? 'on' : ''} aria-pressed={v === value} onClick={() => onPick(v)}>
-          {text}
-        </button>
-      ))}
     </div>
   )
 }
