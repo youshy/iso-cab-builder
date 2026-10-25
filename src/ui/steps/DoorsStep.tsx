@@ -1,5 +1,5 @@
 import { signal } from '@preact/signals'
-import { doorLayout, doorLeafLayers, type DoorLayout, type LeafLayout } from '../../doors/doors'
+import { doorLayout, doorLeafLayers, type DoorLayout, type LeafLayout, type WallDoorLayout } from '../../doors/doors'
 import { inactiveFacetWarnings } from '../../geometry/space'
 import type { Design, DoorLeaf, DoorSide, Layer, StackItem } from '../../model/schema'
 import { addLayer, moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
@@ -16,6 +16,8 @@ const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 const TITLE: Record<Which, string> = { outer: 'Outer door', inner: 'Inner door' }
 const showViews = signal<'both' | 'plan' | 'front' | 'side' | '3d'>('both')
 const exaggerate = signal(false)
+/** Above this wall door weight, butt hinges get a lift-off suggestion. */
+const HEAVY_WALL_KG = 25
 
 const asLayers = (s: StackItem[]): Layer[] => s.filter((i): i is Layer => i.kind === 'layer')
 const sizeText = (w: number, h: number) => `${fmtLen(w)} × ${fmtLen(h)}`
@@ -126,7 +128,66 @@ function LeafPanel({ which, leaf }: { which: Which; leaf: DoorLeaf }) {
   )
 }
 
+/** Wall door settings reuse the outer leaf's hinge and latch config. */
+function WallPanel({ leaf, mass }: { leaf: DoorLeaf; mass: number }) {
+  const lib = library.value
+  const set = (fn: (l: DoorLeaf) => void) => update((d) => void fn(d.door.outer))
+  const hingeKind = lib.hinges.find((h) => h.id === leaf.hingeTypeId)?.kind
+  const opt = <T extends { id: string; name: string }>(items: T[], id: string) => (
+    <>
+      {items.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+      {!items.some((x) => x.id === id) && <option value={id}>Missing item</option>}
+    </>
+  )
+  return (
+    <div class="card">
+      <h4>Wall door</h4>
+      <div class="row">
+        <span class="rl">Hinge edge</span>
+        <select aria-label="Wall door hinge edge" value={leaf.hingeEdge} onChange={(e) => set((l) => (l.hingeEdge = (e.target as HTMLSelectElement).value as DoorLeaf['hingeEdge']))}>
+          {(['left', 'right', 'top', 'bottom'] as const).map((x) => <option key={x} value={x}>{cap(x)}</option>)}
+        </select>
+      </div>
+      <div class="row">
+        <span class="rl">Hinge</span>
+        <select aria-label="Wall door hinge type" value={leaf.hingeTypeId} onChange={(e) => set((l) => (l.hingeTypeId = (e.target as HTMLSelectElement).value))}>{opt(lib.hinges, leaf.hingeTypeId)}</select>
+      </div>
+      {mass > HEAVY_WALL_KG && hingeKind === 'butt' && (
+        <p class="hint">Suggested for a heavy wall: lift-off hinges</p>
+      )}
+      <div class="row">
+        <span class="rl">Latch</span>
+        <select aria-label="Wall door latch type" value={leaf.latchTypeId} onChange={(e) => set((l) => (l.latchTypeId = (e.target as HTMLSelectElement).value))}>{opt(lib.latches, leaf.latchTypeId)}</select>
+        <div class="stepper">
+          <button type="button" aria-label="Fewer wall door latches" disabled={leaf.latchCount <= 0} onClick={() => set((l) => (l.latchCount -= 1))}>−</button>
+          <span class="num" aria-live="polite">{leaf.latchCount}</span>
+          <button type="button" aria-label="More wall door latches" onClick={() => set((l) => (l.latchCount += 1))}>+</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function WallResults({ w }: { w: WallDoorLayout }) {
+  return (
+    <>
+      <h4>Wall door</h4>
+      <ul class="results num">
+        <li><span class="k">Panel</span>{sizeText(w.panel.w, w.panel.h)}, {fmtLen(w.panel.t)} thick</li>
+        <li><span class="k">Weight</span>{w.massKg.toFixed(1)} kg</li>
+        <li><span class="k">Hinges, {w.hingeEdge}</span>{w.hinges.map(fmtLen).join(', ')}</li>
+        <li><span class="k">Latches</span>{w.latches.length ? w.latches.map(fmtLen).join(', ') : 'none'}</li>
+        {w.seals.map((s) => (
+          <li key={s.line}><span class="k">Seal line, {s.line}</span>{fmtLen(s.perimeterMm)}</li>
+        ))}
+        <li><span class="k">Swing radius</span>{fmtLen(w.swingRadius)}</li>
+      </ul>
+    </>
+  )
+}
+
 function Results({ d, l }: { d: Design; l: DoorLayout }) {
+  if (l.wall) return <WallResults w={l.wall} />
   const leafRows = (x: LeafLayout) => {
     const [first] = x.leaves
     return (
@@ -148,8 +209,8 @@ function Results({ d, l }: { d: Design; l: DoorLayout }) {
   }
   return (
     <>
-      {leafRows(l.outer)}
-      {leafRows(l.inner)}
+      {l.outer && leafRows(l.outer)}
+      {l.inner && leafRows(l.inner)}
       <h4>Between the doors</h4>
       <ul class="results num">
         <li><span class="k">Depth</span>{fmtLen(l.betweenDepth)}</li>
@@ -186,16 +247,39 @@ export function DoorsStep() {
       <aside class="doorside">
         <h3>Door position</h3>
         <div class="row">
+          <span class="rl">Door type</span>
+          <Seg
+            label="Door type"
+            value={d.door.kind}
+            options={[['dual', 'Dual doors'], ['wall', 'Whole wall']]}
+            onPick={(v) =>
+              update((x) => {
+                x.door.kind = v
+                // A whole wall is heavy: start from a lift-off hinge when the leaf still has a butt hinge.
+                const lib = library.value
+                const cur = lib.hinges.find((h) => h.id === x.door.outer.hingeTypeId)
+                const lift = lib.hinges.find((h) => h.kind === 'lift-off')
+                if (v === 'wall' && lift && cur?.kind === 'butt') x.door.outer.hingeTypeId = lift.id
+              })}
+          />
+        </div>
+        <div class="row">
           <span class="rl">Side</span>
           <Seg label="Door side" value={d.door.side} options={sideOptions} onPick={(v: DoorSide | 'auto') => update((x) => void (x.door.side = v))} />
         </div>
+        {d.door.kind === 'wall' ? (
+          <div class="row">
+            <NumberField label="Room in front" allowZero value={d.door.roomClearance} min={0} onCommit={(v) => update((x) => void (x.door.roomClearance = v))} />
+          </div>
+        ) : (
+          <>
         <div class="row">
           <span class="rl">Opening</span>
           <Seg
             label="Opening size"
             value={d.door.opening ? 'custom' : 'auto'}
             options={[['auto', 'Auto from cab'], ['custom', 'Custom']]}
-            onPick={(v) => update((x) => void (x.door.opening = v === 'auto' ? null : { ...l.outer.opening }))}
+            onPick={(v) => update((x) => void (x.door.opening = v === 'auto' ? null : { ...(l.outer?.opening ?? { w: 0, h: 0 }) }))}
           />
         </div>
         {d.door.opening && (
@@ -213,11 +297,19 @@ export function DoorsStep() {
           <span class="rl">Between</span>
           <Seg label="Between the doors" value={d.door.between} options={[['air', 'Air'], ['insulation', 'Insulation']]} onPick={(v) => update((x) => void (x.door.between = v))} />
         </div>
+          </>
+        )}
         {warnings.map((m) => <p class="warn" role="alert" key={m}>{m}</p>)}
 
         <div class="panels">
-          <LeafPanel which="outer" leaf={d.door.outer} />
-          <LeafPanel which="inner" leaf={d.door.inner} />
+          {l.wall ? (
+            <WallPanel leaf={d.door.outer} mass={l.wall.massKg} />
+          ) : (
+            <>
+              <LeafPanel which="outer" leaf={d.door.outer} />
+              <LeafPanel which="inner" leaf={d.door.inner} />
+            </>
+          )}
         </div>
 
         <h3>Results</h3>
@@ -240,7 +332,7 @@ export function DoorsStep() {
             Exaggerate depth ×2.4
           </label>
           <div class="sp" />
-          <span class="ctl num">Between the doors: <b>{fmtLen(l.betweenDepth)}</b></span>
+          {!l.wall && <span class="ctl num">Between the doors: <b>{fmtLen(l.betweenDepth)}</b></span>}
         </div>
         <div class="views" style={single ? { gridTemplateColumns: '1fr' } : undefined}>
           {mode === 'both' && (

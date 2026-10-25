@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { wallStack } from '../geometry/walls'
 import { defaultDesign, defaultLibrary } from '../model/defaults'
 import type { Gap, Layer, StackItem } from '../model/schema'
 import {
@@ -126,6 +127,15 @@ describe('escape', () => {
     const b = structuredClone(defaultDesign())
     b.wallDefault = [mdf(25), mdf(25), mdf(25)]
     expect(escape(b, lib).worst).toBeGreaterThan(escape(a, lib).worst)
+  })
+  it('whole-wall door mode: every wall uses its own stack, no door surface', () => {
+    const d = structuredClone(defaultDesign())
+    d.door.kind = 'wall'
+    const dual = escape(structuredClone(defaultDesign()), lib).tlBox
+    const wall = escape(d, lib).tlBox
+    // All six walls share one stack and no door area is substituted, so the box TL is that stack's TL.
+    toOctaves(tlStack(wallStack(d, 'left'), lib).thirds).forEach((v, i) => expect(wall[i]).toBeCloseTo(v, 9))
+    expect(wall).not.toEqual(dual)
   })
   it('door leaves lighter than the wall lower the box TL', () => {
     const base = defaultDesign()

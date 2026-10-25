@@ -119,6 +119,8 @@ export function defaultDesign(): Design {
     panels: [],
     treatments: [],
     door: {
+      kind: 'dual',
+      roomClearance: 600,
       side: 'auto',
       opening: null,
       margin: 15,

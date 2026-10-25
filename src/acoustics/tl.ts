@@ -137,6 +137,10 @@ function surfaces(d: Design, lib: Library): Surface[] {
   const { outer } = resolveDims(d)
   const dw = doorWall(d)
   const door = doorLayout(d, lib)
+  // Whole-wall door: the wall keeps its own stack, no door surface is substituted.
+  if (!door.outer) {
+    return WALLS.map((w) => ({ area_m2: FACE_AREA(outer, w), tl: toOctaves(tlStack(wallStack(d, w), lib).thirds) }))
+  }
   const leaves = door.outer.leaves
   const doorArea =
     (leaves.reduce((a, l) => a + l.w, 0) + (leaves.length - 1) * SPLIT_GAP) * leaves[0].h / 1e6

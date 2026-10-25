@@ -122,6 +122,8 @@ export const DoorLeafSchema = z.object({
 export type DoorLeaf = z.infer<typeof DoorLeafSchema>
 
 export const DoorSchema = z.object({
+  kind: z.enum(['dual', 'wall']).default('dual'), // dual sound-lock doors, or the whole door wall swings
+  roomClearance: z.number().min(0).default(600), // free space in front of the box for a wall door, mm
   side: z.union([DoorSideSchema, z.literal('auto')]),
   opening: z.object({ w: z.number().positive(), h: z.number().positive() }).nullable(), // null = auto
   margin: z.number().min(0),

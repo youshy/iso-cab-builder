@@ -18,10 +18,26 @@ export type LeafLayout = {
   direction: 'in' | 'out'
 }
 
-export type DoorLayout = {
+/** The whole door wall as one swinging panel. */
+export type WallDoorLayout = {
   side: DoorSide
-  outer: LeafLayout
-  inner: LeafLayout
+  panel: { w: number; h: number; t: number } // outer face of the door wall
+  massKg: number
+  hingeEdge: 'left' | 'right' | 'top' | 'bottom'
+  hinges: number[]
+  latches: number[]
+  seals: { line: 'shell' | 'liner'; perimeterMm: number }[]
+  swingRadius: number
+  collisions: string[]
+  notes: string[]
+}
+
+export type DoorLayout = {
+  kind: 'dual' | 'wall'
+  side: DoorSide
+  outer: LeafLayout | null // null in wall mode
+  inner: LeafLayout | null // null in wall mode
+  wall: WallDoorLayout | null // null in dual mode
   betweenDepth: number
   cabsThrough: { cabId: string; fits: boolean }[]
   collisions: string[]
@@ -84,9 +100,64 @@ function hingeAndLatch(
   }
 }
 
+const MIN_WALL_HINGE_SPAN = 1200
+
+function wallDoorLayout(d: Design, lib: Library, side: DoorSide): WallDoorLayout {
+  const o = resolveDims(d).outer
+  const stack = wallStack(d, side)
+  const panelW = side === 'front' ? o.x : o.z
+  const panel = { w: panelW, h: o.y, t: stackThickness(stack) }
+  const areaM2 = (panel.w * panel.h) / 1e6
+  const massKg = stack.reduce((sum, it) => {
+    if (it.kind !== 'layer') return sum
+    const density = lib.materials.find((m) => m.id === it.materialId)?.density ?? 0
+    return sum + density * (it.thickness / 1000) * areaM2
+  }, 0)
+
+  const cfg = d.door.outer
+  const vertical = cfg.hingeEdge === 'left' || cfg.hingeEdge === 'right'
+  const edgeLen = vertical ? panel.h : panel.w
+  const swingRadius = vertical ? panel.w : panel.h
+  const hingeType = lib.hinges.find((h) => h.id === cfg.hingeTypeId)
+  const latchType = lib.latches.find((l) => l.id === cfg.latchTypeId)
+  const count = edgeLen < MIN_WALL_HINGE_SPAN ? 3 : 4
+
+  const inner = resolveDims(d).inner
+  const innerW = side === 'front' ? inner.x : inner.z
+  const seals: WallDoorLayout['seals'] = [{ line: 'shell', perimeterMm: 2 * (panel.w + panel.h) }]
+  if (splitStack(stack).gap) seals.push({ line: 'liner', perimeterMm: 2 * (innerW + inner.y) })
+
+  const collisions: string[] = []
+  if (swingRadius > d.door.roomClearance) {
+    collisions.push(
+      `Wall door needs ${mm(swingRadius)} clear in front of the box, you have ${mm(d.door.roomClearance)}`,
+    )
+  }
+  return {
+    side,
+    panel,
+    massKg,
+    hingeEdge: cfg.hingeEdge,
+    hinges: spread(count, edgeLen, hingeType?.edgeInset ?? 0),
+    latches: spread(cfg.latchCount, edgeLen, latchType?.edgeInset ?? 0),
+    seals,
+    swingRadius,
+    collisions,
+    notes: ['Seals are not included in the sound estimate'],
+  }
+}
+
 export function doorLayout(d: Design, lib: Library): DoorLayout {
   const w = doorWall(d)
   const side: DoorSide = w === 'left' || w === 'right' || w === 'front' ? w : autoDoorSide(d)
+  if (d.door.kind === 'wall') {
+    const wall = wallDoorLayout(d, lib, side)
+    return {
+      kind: 'wall', side, outer: null, inner: null, wall, betweenDepth: 0,
+      cabsThrough: d.cabs.map((c) => ({ cabId: c.id, fits: true })),
+      collisions: [...wall.collisions], notes: [...wall.notes],
+    }
+  }
   const wall: WallId = side
   const { margin, overlap } = d.door
   const cabs = d.cabs
@@ -159,5 +230,5 @@ export function doorLayout(d: Design, lib: Library): DoorLayout {
     }
   }
 
-  return { side, outer, inner, betweenDepth, cabsThrough, collisions, notes }
+  return { kind: 'dual', side, outer, inner, wall: null, betweenDepth, cabsThrough, collisions, notes }
 }

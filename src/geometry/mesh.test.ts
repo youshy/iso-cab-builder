@@ -118,6 +118,23 @@ describe('buildScene', () => {
     }
     const doorSolids = (d: Design) => buildScene(d).solids.filter((x) => x.kind === 'door')
 
+    it('whole-wall mode: door wall solids are kind door, uncut, and no leaf solids', () => {
+      const d = base()
+      d.door.kind = 'wall'
+      const solids = buildScene(d).solids.filter((x) => x.wall === 'front' && x.kind !== 'treatment')
+      expect(solids.map((x) => x.name)).toEqual(['front-shell'])
+      expect(solids.every((x) => x.kind === 'door')).toBe(true)
+      expect(buildScene(d).solids.filter((x) => x.name.startsWith('door-'))).toHaveLength(0)
+      d.wallDefault = [
+        { kind: 'layer', materialId: 'plywood', thickness: 18 },
+        { kind: 'gap', width: 50, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' },
+        { kind: 'layer', materialId: 'mdf', thickness: 18 },
+      ]
+      const g = buildScene(d).solids.filter((x) => x.wall === 'front')
+      expect(g.map((x) => x.name).sort()).toEqual(['front-liner', 'front-shell'])
+      expect(g.every((x) => x.kind === 'door')).toBe(true)
+    })
+
     it('door wall is cut into boxes around the cutout, other walls stay whole', () => {
       const d = base()
       const solids = buildScene(d).solids

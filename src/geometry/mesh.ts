@@ -75,10 +75,13 @@ export function buildScene(d: Design, lib: Library): { solids: Solid[] } {
   const centred = (size: { w: number; h: number }): Rect => [
     [centre.w - size.w / 2, centre.w + size.w / 2], [centre.h - size.h / 2, centre.h + size.h / 2],
   ]
-  const hole = centred({
-    w: Math.max(door.outer.cutout.w, door.inner.cutout.w),
-    h: Math.max(door.outer.cutout.h, door.inner.cutout.h),
-  })
+  // Whole-wall door: no cutout, the entire wall is the door.
+  const hole = door.outer && door.inner
+    ? centred({
+        w: Math.max(door.outer.cutout.w, door.inner.cutout.w),
+        h: Math.max(door.outer.cutout.h, door.inner.cutout.h),
+      })
+    : null
   const solids: Solid[] = []
   const thick = (w: WallId) => stackThickness(wallStack(d, w))
   const lowT = (a: Axis) => thick(a === 'x' ? 'left' : a === 'y' ? 'bottom' : 'back')
@@ -104,8 +107,8 @@ export function buildScene(d: Design, lib: Library): { solids: Solid[] } {
       high ? [inner[n] + from, inner[n] + to] : [0 - to, 0 - from]
     const make = (kind: 'shell' | 'liner', from: number, to: number) => {
       if (to - from <= 0) return
-      if (w !== side) {
-        solids.push(box(`${w}-${kind}`, kind, w, {
+      if (w !== side || !hole) {
+        solids.push(box(`${w}-${kind}`, w === side ? 'door' : kind, w, {
           [n]: range(from, to), [u]: extent(w, u), [v]: extent(w, v),
         } as Record<Axis, [number, number]>))
         return
@@ -243,6 +246,6 @@ function addDoors(solids: Solid[], d: Design, door: ReturnType<typeof doorLayout
         put(`door-${leaf.which}-frame-${i + 1}`, r, fFrom, fTo))
     }
   }
-  place(door.outer)
-  place(door.inner)
+  if (door.outer) place(door.outer)
+  if (door.inner) place(door.inner)
 }

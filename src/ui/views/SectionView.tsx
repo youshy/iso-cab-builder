@@ -3,7 +3,7 @@ import { facetOffsetAt } from '../../geometry/facets'
 import { cabBox } from '../../geometry/space'
 import { panelExtent, panelTreatments, wallTreatments } from '../../geometry/treatments'
 import { activeInterior, stackThickness, wallNormal, wallStack, WALLS } from '../../geometry/walls'
-import { SPLIT_GAP, type DoorLayout, type LeafLayout } from '../../doors/doors'
+import { SPLIT_GAP, type DoorLayout, type LeafLayout, type WallDoorLayout } from '../../doors/doors'
 import { doorWall, doorWidthAxis, widthEdgeEnd } from '../../doors/side'
 import type { Axis, Design, Vec3, WallId } from '../../model/schema'
 
@@ -28,6 +28,19 @@ export const DEPTH_EXAGGERATION = 2.4
 
 type R = { x: number; y: number; width: number; height: number }
 
+/** What the section draws for one swinging piece: a door leaf, or the whole door wall. */
+type Swinger = Pick<LeafLayout, 'leaves' | 'swingRadius' | 'direction'> & {
+  which: 'outer' | 'inner' | 'wall'
+  hingeEdge: 'left' | 'right' | 'top' | 'bottom'
+}
+
+const asSwinger = (l: LeafLayout): Swinger => ({ ...l, hingeEdge: l.hinges[0].edge as Swinger['hingeEdge'] })
+
+/** The whole door wall as one swinging slab, opening outward from its inner face. */
+const wallSwinger = (w: WallDoorLayout): Swinger => ({
+  which: 'wall', leaves: [w.panel], swingRadius: w.swingRadius, direction: 'out', hingeEdge: w.hingeEdge,
+})
+
 export function SectionView({ design: d, view, highlight, compare, exaggerate, onSelectWall, doors }: Props) {
   const [ha, va] = AXES[view]
   const cut = (['x', 'y', 'z'] as Axis[]).find((a) => a !== ha && a !== va)!
@@ -50,7 +63,7 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
     rect(-lo(dd, ha), innerSize[ha] + hi(dd, ha), -lo(dd, va), innerSize[va] + hi(dd, va))
 
   /** Extents of a leaf along a world axis: halves for a split leaf's width, one range otherwise, null off the door plane. */
-  function leafSegs(l: LeafLayout, axis: Axis, side: DoorLayout['side']): [number, number][] | null {
+  function leafSegs(l: Swinger, axis: Axis, side: DoorLayout['side']): [number, number][] | null {
     const c = inner[axis] / 2
     if (axis === 'y') return [[c - l.leaves[0].h / 2, c + l.leaves[0].h / 2]]
     if (axis !== doorWidthAxis(side)) return null
@@ -64,12 +77,13 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
     const dw = dl.side
     const dn = wallNormal(dw)
     const els: preact.JSX.Element[] = []
+    const swingers = dl.wall ? [wallSwinger(dl.wall)] : [dl.inner, dl.outer].filter((l) => l !== null).map(asSwinger)
     if (dn !== ha && dn !== va) {
-      for (const l of [dl.inner, dl.outer]) {
+      for (const l of swingers) {
         const hs = leafSegs(l, ha, dw), vs = leafSegs(l, va, dw)
         if (!hs || !vs) continue
         for (const [h0, h1] of hs) for (const [v0, v1] of vs) {
-          els.push(<rect key={`${l.which}${h0}`} {...rect(h0, h1, v0, v1)} class={`sv-leaf ${l.which}`}><title>{`${l.which} door leaf`}</title></rect>)
+          els.push(<rect key={`${l.which}${h0}`} {...rect(h0, h1, v0, v1)} class={`sv-leaf ${l.which}`}><title>{l.which === 'wall' ? 'door wall' : `${l.which} door leaf`}</title></rect>)
         }
       }
       return els
@@ -78,17 +92,17 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
     const out = isMin ? -1 : 1
     const al = dn === ha ? va : ha
     const t = thick(d, dw)
-    const faces = { outer: isMin ? -t : inner[dn] + t, inner: isMin ? 0 : inner[dn] }
+    const faces = { outer: isMin ? -t : inner[dn] + t, inner: isMin ? 0 : inner[dn], wall: isMin ? 0 : inner[dn] }
     const at = (nPos: number, alPos: number): [number, number] => (dn === ha ? pt(nPos, alPos) : pt(alPos, nPos))
-    for (const l of [dl.inner, dl.outer]) {
+    for (const l of swingers) {
       const segs = leafSegs(l, al, dw)
       if (!segs) continue
       const n0 = faces[l.which], n1 = n0 + out * l.leaves[0].t
       segs.forEach(([a0, a1], i) => {
         const r = dn === ha ? rect(Math.min(n0, n1), Math.max(n0, n1), a0, a1) : rect(a0, a1, Math.min(n0, n1), Math.max(n0, n1))
-        els.push(<rect key={`${l.which}${i}`} {...r} class={`sv-leaf ${l.which}`}><title>{`${l.which} door leaf`}</title></rect>)
+        els.push(<rect key={`${l.which}${i}`} {...r} class={`sv-leaf ${l.which}`}><title>{l.which === 'wall' ? 'door wall' : `${l.which} door leaf`}</title></rect>)
         // Hinge end along the view's door-plane axis; arcs only show when the hinge axis lies in this view.
-        const edge = l.leaves.length === 2 && al === doorWidthAxis(dw) ? (i === 0 ? 'min' : 'max') : hingeEnd(dw, l, al)
+        const edge = l.leaves.length === 2 && al === doorWidthAxis(dw) ? (i === 0 ? 'min' : 'max') : hingeEnd(dw, l.hingeEdge, al)
         if (!edge) return
         const hingeAt = edge === 'min' ? a0 : a1
         const dir = edge === 'min' ? 1 : -1
@@ -99,7 +113,7 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
           return at(mid + swing * l.swingRadius * Math.sin(th), hingeAt + dir * l.swingRadius * Math.cos(th))
         })
         for (const [x, y] of pts) reach.push({ x, y, width: 0, height: 0 })
-        els.push(<polyline key={`arc${l.which}${i}`} points={pts.map((q) => q.join(',')).join(' ')} class={`sv-swing ${l.which}`} fill="none"><title>{`${l.which} door swing`}</title></polyline>)
+        els.push(<polyline key={`arc${l.which}${i}`} points={pts.map((q) => q.join(',')).join(' ')} class={`sv-swing ${l.which}`} fill="none"><title>{l.which === 'wall' ? 'door wall swing' : `${l.which} door swing`}</title></polyline>)
       })
     }
     return els
@@ -298,9 +312,8 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
 }
 
 /** End of the leaf's hinge edge along `axis` (world), or null when the hinge runs across that axis. */
-function hingeEnd(side: DoorLayout['side'], l: LeafLayout, axis: Axis): 'min' | 'max' | null {
-  const edge = l.hinges[0].edge
+function hingeEnd(side: DoorLayout['side'], edge: Swinger['hingeEdge'], axis: Axis): 'min' | 'max' | null {
   if (edge === 'top') return axis === 'y' ? 'max' : null
   if (edge === 'bottom') return axis === 'y' ? 'min' : null
-  return axis === doorWidthAxis(side) ? widthEdgeEnd(side, edge as 'left' | 'right') : null
+  return axis === doorWidthAxis(side) ? widthEdgeEnd(side, edge) : null
 }
