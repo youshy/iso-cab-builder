@@ -4,6 +4,11 @@ const rad = (deg: number) => (deg * Math.PI) / 180
 const round1 = (n: number) => Math.round(n * 10) / 10
 
 export const packingDepth = (f: Facet): number => f.width * Math.tan(rad(f.tilt))
+/** Width-weighted mean depth of the wedge behind the facets (half each facet's packing depth), mm. */
+export function meanPackingDepth(wi: WallInterior): number {
+  const total = wi.facets.reduce((a, f) => a + f.width, 0)
+  return total > 0 ? wi.facets.reduce((a, f) => a + (f.width * packingDepth(f)) / 2, 0) / total : 0
+}
 export const panelLength = (f: Facet): number => f.width / Math.cos(rad(f.tilt))
 
 /** Offset of facet `f` face from the wall face at distance `d` from its hinge edge. */

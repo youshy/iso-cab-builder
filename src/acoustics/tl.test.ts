@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { wallStack } from '../geometry/walls'
 import { defaultDesign, defaultLibrary } from '../model/defaults'
-import type { Gap, Layer, StackItem } from '../model/schema'
+import { doorLayout } from '../doors/doors'
+import type { Design, Gap, Layer, StackItem, WallInterior } from '../model/schema'
 import {
   OCTAVES,
+  absorberInsertion,
+  doorStack,
+  effectiveWallStack,
+  interiorLevel,
   THIRD_OCTAVES,
   TL_MODEL_LABEL,
   escape,
@@ -207,5 +212,103 @@ describe('escape', () => {
     const b = escape(light, lib).tlBox
     expect(b).not.toEqual(a)
     expect(b[2]).toBeLessThan(a[2])
+  })
+})
+
+describe('as-built stacks', () => {
+  /** Two facets across the right wall (the default door is on the left, where facets are inactive). */
+  const withFacets = (behind: WallInterior['behind']): Design => {
+    const d = structuredClone(defaultDesign())
+    d.interior.right = {
+      splitAxis: 'z',
+      facets: [
+        { width: 200, tilt: 15, hinge: 'min' },
+        { width: 200, tilt: 15, hinge: 'max' },
+      ],
+      panelMaterialId: 'plywood',
+      panelThickness: 12,
+      closure: 'fillers',
+      behind,
+    }
+    return d
+  }
+  const rockwoolOnBack = (): Design => {
+    const d = structuredClone(defaultDesign())
+    d.treatments.push({ id: 't1', surface: { wall: 'back' }, materialId: 'rockwool', thickness: 50 })
+    return d
+  }
+
+  it('a bare wall gives exactly the wall stack TL', () => {
+    const d = defaultDesign()
+    expect(tlStack(effectiveWallStack(d, lib, 'back'), lib)).toEqual(tlStack(wallStack(d, 'back'), lib))
+  })
+  it('facets add their packing cavity and panel: insulated beats bare at 1 kHz, empty is lower above resonance', () => {
+    const d = withFacets('insulation')
+    const stack = effectiveWallStack(d, lib, 'right')
+    const cav = stack[2] as Gap
+    expect(cav.kind).toBe('gap')
+    // mean packing depth of a 200 mm facet at 15 degrees: 200 tan 15 / 2
+    expect(cav.width).toBeCloseTo((200 * Math.tan((15 * Math.PI) / 180)) / 2, 6)
+    expect(cav.decoupling).toBe('strips')
+    expect(stack[3]).toEqual({ kind: 'layer', materialId: 'plywood', thickness: 12 })
+    const bare = tlStack(wallStack(d, 'right'), lib).thirds
+    const ins = tlStack(stack, lib)
+    expect(ins.thirds).not.toEqual(bare)
+    expect(at(ins.thirds, 1000)).toBeGreaterThanOrEqual(at(bare, 1000))
+    const emp = tlStack(effectiveWallStack(withFacets('empty'), lib, 'right'), lib).thirds
+    const f = THIRD_OCTAVES.find((x) => x > (ins.f0 as number) * 1.5) as number
+    expect(at(emp, f)).toBeLessThan(at(ins.thirds, f))
+  })
+  it('rockwool 50 on the back adds over 1 dB at 2 kHz and under 0.5 dB at 125 Hz', () => {
+    const d = rockwoolOnBack()
+    const bare = tlStack(wallStack(d, 'back'), lib).thirds
+    const built = tlStack(effectiveWallStack(d, lib, 'back'), lib).thirds
+    expect(at(built, 2000) - at(bare, 2000)).toBeGreaterThan(1)
+    expect(Math.abs(at(built, 125) - at(bare, 125))).toBeLessThan(0.5)
+  })
+  it('absorber insertion term is never negative and is capped at 15 dB', () => {
+    const thin = { kind: 'absorber' as const, materialId: 'rockwool', thickness: 50 }
+    const thick = { kind: 'absorber' as const, materialId: 'rockwool', thickness: 400 }
+    THIRD_OCTAVES.forEach((f) => {
+      expect(absorberInsertion(thin, f)).toBeGreaterThanOrEqual(0)
+      expect(absorberInsertion(thick, f)).toBeLessThanOrEqual(15)
+    })
+    expect(absorberInsertion(thick, 4000)).toBe(15)
+  })
+  it('door stack: dual is outer leaf, between space, inner leaf; wall mode has none', () => {
+    const d = defaultDesign()
+    const s = doorStack(d, lib)!
+    const gaps = s.filter((i): i is Gap => i.kind === 'gap')
+    expect(gaps).toHaveLength(1)
+    expect(gaps[0].width).toBe(doorLayout(d, lib).betweenDepth)
+    const w = structuredClone(d)
+    w.door.kind = 'wall'
+    expect(doorStack(w, lib)).toBeNull()
+  })
+})
+
+describe('interior absorption', () => {
+  it('interiorLevel: L1m 115, A 0.4 m2 gives 136.0', () => {
+    expect(interiorLevel(115, 0.4)).toBeCloseTo(136.0, 1)
+  })
+  it('rockwool on the back raises absorption and lowers inside and outside levels, more at 1 kHz than 125 Hz', () => {
+    const a = escape(defaultDesign(), lib)
+    const d = structuredClone(defaultDesign())
+    d.treatments.push({ id: 't1', surface: { wall: 'back' }, materialId: 'rockwool', thickness: 50 })
+    const b = escape(d, lib)
+    expect(a.absorption).toHaveLength(6)
+    expect(a.lin).toHaveLength(6)
+    const k = OCTAVES.indexOf(1000)
+    const lo = OCTAVES.indexOf(125)
+    expect(b.absorption[k]).toBeGreaterThan(a.absorption[k])
+    expect(a.lin[k] - b.lin[k]).toBeGreaterThan(2)
+    expect(a.lout[k] - b.lout[k]).toBeGreaterThan(2)
+    expect(a.lout[lo] - b.lout[lo]).toBeLessThan(a.lout[k] - b.lout[k])
+    expect(a.lin[lo] - b.lin[lo]).toBeLessThan(a.lin[k] - b.lin[k])
+  })
+  it('outside level uses the inside level from the absorption', () => {
+    const d = defaultDesign()
+    const r = escape(d, lib)
+    r.lin.forEach((l, i) => expect(l).toBeCloseTo(interiorLevel(d.escape.insideLevel[i], r.absorption[i]), 9))
   })
 })

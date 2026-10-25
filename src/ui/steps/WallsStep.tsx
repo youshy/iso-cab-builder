@@ -1,10 +1,11 @@
 import { signal } from '@preact/signals'
 import { Fragment } from 'preact'
 import { useState } from 'preact/hooks'
-import { escape, OCTAVES, THIRD_OCTAVES, tlStack } from '../../acoustics/tl'
+import { doorStack, effectiveWallStack, escape, OCTAVES, THIRD_OCTAVES, tlStack, type TlItem } from '../../acoustics/tl'
 import { hasSingleLayerBox } from '../../geometry/boxes'
-import { stackThickness, WALLS, wallStack } from '../../geometry/walls'
-import type { Gap, JointType, Layer, StackItem, WallId } from '../../model/schema'
+import { wallTreatments } from '../../geometry/treatments'
+import { activeInterior, stackThickness, WALLS, wallStack } from '../../geometry/walls'
+import type { Design, Gap, JointType, Layer, StackItem, WallId } from '../../model/schema'
 import { addLayer, canInsertGapAt, firstFreeBoundary, insertGap, moveLayer, removeLayer, setLayerMaterial } from '../../model/stack'
 import { compareDesign, compareVersion, design, fmtLen, library, update } from '../../model/store'
 import { Chart, type ChartSeries } from '../Chart'
@@ -20,6 +21,9 @@ const editing = signal<WallId | null>(null)
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 const targetTitle = (t: Target) => (t === 'default' ? 'Default wall' : `${cap(t)} wall`)
+
+/** Walls whose facets or treatments change their stack as built. */
+const builtWalls = (d: Design) => WALLS.filter((w) => activeInterior(d, w) || wallTreatments(d, w).length > 0)
 
 /** Apply a pure stack edit to the default stack or a wall override. */
 function editStack(target: Target, fn: (s: StackItem[]) => StackItem[]) {
@@ -201,7 +205,7 @@ function JointPicker() {
   )
 }
 
-function StackChart({ title, stack, compareStack }: { title: string; stack: StackItem[]; compareStack: StackItem[] | null }) {
+function StackChart({ title, stack, compareStack }: { title: string; stack: TlItem[]; compareStack: TlItem[] | null }) {
   const lib = library.value
   const cur = tlStack(stack, lib)
   const series: ChartSeries[] = [{ label: 'Current', y: cur.thirds }]
@@ -228,7 +232,9 @@ function EscapeTable() {
   const d = design.value
   const lib = library.value
   const e = escape(d, lib)
-  const models = [...new Set([d.wallDefault, ...WALLS.map((w) => wallStack(d, w))].map((s) => tlStack(s, lib).model))]
+  const door = doorStack(d, lib)
+  const stacks: TlItem[][] = [...WALLS.map((w) => effectiveWallStack(d, lib, w)), ...(door ? [door] : [])]
+  const models = [...new Set(stacks.map((s) => tlStack(s, lib).model))]
   const worstAt = OCTAVES[e.margin.indexOf(e.worst)]
   const row = (label: string, cells: (i: number) => preact.ComponentChild) => (
     <tr>
@@ -255,9 +261,11 @@ function EscapeTable() {
           </tr>
         </thead>
         <tbody>
-          {row('Inside level (dB)', (i) => (
-            <NumberField ariaLabel={`Inside level ${OCTAVES[i]} Hz`} kind="plain" width={52} value={d.escape.insideLevel[i]} onCommit={(v) => update((x) => void (x.escape.insideLevel[i] = v))} />
+          {row('Cab level at 1 m (dB)', (i) => (
+            <NumberField ariaLabel={`Cab level at 1 m ${OCTAVES[i]} Hz`} kind="plain" width={52} value={d.escape.insideLevel[i]} onCommit={(v) => update((x) => void (x.escape.insideLevel[i] = v))} />
           ))}
+          {row('Absorption in box (m²)', (i) => e.absorption[i].toFixed(2))}
+          {row('Level inside box (dB)', (i) => e.lin[i].toFixed(1))}
           {row('Box TL (dB)', (i) => e.tlBox[i].toFixed(1))}
           {row('Outside level (dB)', (i) => e.lout[i].toFixed(1))}
           <tr>
@@ -269,7 +277,7 @@ function EscapeTable() {
         </tbody>
       </table>
       <p class={`summary num ${e.worst < 0 ? 'neg' : ''}`}>
-        Worst margin: <b>{e.worst.toFixed(1)} dB</b> at {worstAt} Hz. Door leaves are not included yet.
+        Worst margin: <b>{e.worst.toFixed(1)} dB</b> at {worstAt} Hz. Level inside box is a diffuse-field estimate from the absorption.
       </p>
     </>
   )
@@ -279,6 +287,7 @@ export function WallsStep() {
   const d = design.value
   const cmp = compareDesign.value
   const overrides = WALLS.filter((w) => d.wallOverrides[w])
+  const door = doorStack(d, library.value)
   return (
     <>
       <aside>
@@ -316,6 +325,10 @@ export function WallsStep() {
         {overrides.map((w) => (
           <StackChart key={w} title={targetTitle(w)} stack={d.wallOverrides[w]!} compareStack={cmp ? wallStack(cmp, w) : null} />
         ))}
+        {builtWalls(d).map((w) => (
+          <StackChart key={`built-${w}`} title={`${cap(w)} (as built)`} stack={effectiveWallStack(d, library.value, w)} compareStack={cmp ? effectiveWallStack(cmp, library.value, w) : null} />
+        ))}
+        {door && <StackChart key="door" title="Door" stack={door} compareStack={cmp ? doorStack(cmp, library.value) : null} />}
         <EscapeTable />
       </section>
     </>
