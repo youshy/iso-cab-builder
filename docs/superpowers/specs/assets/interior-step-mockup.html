@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ISO Cab Builder, Interior step</title>
+<style>
+  :root{
+    --bg: oklch(0.975 0.004 80);
+    --panel: oklch(0.955 0.005 80);
+    --line: oklch(0.86 0.006 80);
+    --line-strong: oklch(0.72 0.008 80);
+    --ink: oklch(0.24 0.01 80);
+    --ink-2: oklch(0.45 0.01 80);
+    --ink-3: oklch(0.6 0.01 80);
+    --accent: oklch(0.55 0.13 45);
+    --accent-soft: oklch(0.93 0.035 45);
+    --warn: oklch(0.55 0.15 30);
+    --ok: oklch(0.5 0.09 150);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px; color: var(--ink); background: var(--bg);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;grid-template-rows:auto auto 1fr auto}
+  .num{font-variant-numeric:tabular-nums}
+  button,input,select{font:inherit;color:inherit}
+  /* top bar */
+  .top{display:flex;align-items:center;gap:16px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .top b{font-weight:650}
+  .top .sp{flex:1}
+  .ctl{display:flex;align-items:center;gap:6px;color:var(--ink-2)}
+  select,.btn{border:1px solid var(--line-strong);background:var(--bg);border-radius:6px;padding:4px 8px}
+  .btn{cursor:pointer}
+  .btn:hover{background:var(--panel)}
+  .btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  /* steps */
+  .steps{display:flex;border-bottom:1px solid var(--line);padding:0 8px;background:var(--bg)}
+  .step{padding:10px 14px;color:var(--ink-2);border-bottom:2px solid transparent;cursor:pointer;display:flex;gap:8px;align-items:center}
+  .step .n{width:20px;height:20px;border-radius:50%;border:1px solid var(--line-strong);display:grid;place-items:center;font-size:11px}
+  .step.done .n{background:var(--ink-3);border-color:var(--ink-3);color:var(--bg)}
+  .step.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+  .step.on .n{border-color:var(--accent);color:var(--accent)}
+  /* main */
+  .main{display:grid;grid-template-columns:380px 1fr;min-height:0}
+  aside{border-right:1px solid var(--line);background:var(--panel);overflow:auto;padding:16px}
+  h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-2);margin:20px 0 8px;font-weight:600}
+  h3:first-child{margin-top:0}
+  .hint{color:var(--ink-3);font-size:12px;margin:4px 0 0}
+  /* wall picker: unfolded box */
+  .net{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,34px);gap:3px;width:100%}
+  .face{border:1px solid var(--line-strong);background:var(--bg);border-radius:4px;display:grid;place-items:center;font-size:12px;cursor:pointer;position:relative}
+  .face:hover{border-color:var(--ink-2)}
+  .face.sel{background:var(--accent-soft);border-color:var(--accent);font-weight:600}
+  .face .badge{position:absolute;top:2px;right:4px;font-size:10px;color:var(--ink-3)}
+  .face.door{border-style:dashed;color:var(--ink-3);cursor:not-allowed}
+  .seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:6px;overflow:hidden}
+  .seg button{border:0;background:var(--bg);padding:4px 10px;cursor:pointer}
+  .seg button+button{border-left:1px solid var(--line-strong)}
+  .seg button.on{background:var(--ink);color:var(--bg)}
+  .row{display:flex;align-items:center;gap:10px;margin:8px 0}
+  .row label{width:92px;color:var(--ink-2)}
+  .stepper{display:inline-flex;align-items:center;border:1px solid var(--line-strong);border-radius:6px;background:var(--bg)}
+  .stepper button{border:0;background:none;width:28px;height:28px;cursor:pointer}
+  .stepper span{min-width:24px;text-align:center}
+  /* facet table */
+  table{width:100%;border-collapse:collapse;margin-top:6px}
+  th{font-size:11px;font-weight:600;color:var(--ink-3);text-align:left;padding:4px 4px;border-bottom:1px solid var(--line)}
+  td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
+  tr.facet:hover td{background:var(--bg)}
+  tr.facet.hi td{background:var(--accent-soft)}
+  td input[type=number]{width:62px;border:1px solid var(--line-strong);border-radius:4px;padding:3px 4px;background:var(--bg);text-align:right}
+  td input[type=range]{width:100%;accent-color:var(--accent)}
+  td select{padding:2px 4px}
+  .unit{color:var(--ink-3);font-size:12px}
+  details{border-top:1px solid var(--line);padding:10px 0}
+  summary{cursor:pointer;font-weight:600}
+  summary .unit{font-weight:400;margin-left:6px}
+  /* canvas */
+  .stage{display:grid;grid-template-rows:auto 1fr;min-height:0}
+  .viewbar{display:flex;gap:12px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line)}
+  .viewbar .sp{flex:1}
+  .views{display:grid;grid-template-columns:1.3fr 1fr;gap:1px;background:var(--line);min-height:0}
+  .view{background:var(--bg);position:relative;display:flex;flex-direction:column}
+  .view .lbl{position:absolute;top:8px;left:12px;font-size:12px;color:var(--ink-2)}
+  .view svg{flex:1;width:100%;height:100%}
+  .placeholder3d{flex:1;display:grid;place-items:center;color:var(--ink-3);border:1px dashed var(--line-strong);margin:36px 16px 16px;border-radius:6px;text-align:center;padding:12px}
+  /* bottom mode strip */
+  .modes{border-top:1px solid var(--line);background:var(--panel);padding:10px 16px;display:grid;grid-template-columns:auto 1fr auto;gap:24px;align-items:center}
+  .status{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .mlist{display:flex;gap:18px;overflow:auto}
+  .m{white-space:nowrap;font-size:12px}
+  .m b{font-size:13px}
+  .m .d{color:var(--ok)} .m .u{color:var(--warn)}
+  .legend{display:flex;gap:14px;font-size:12px;color:var(--ink-2);align-items:center}
+  .sw{display:inline-block;width:18px;height:0;border-top:2px solid var(--ink);vertical-align:middle;margin-right:4px}
+  .sw.cmp{border-top:2px dashed var(--ink-3)}
+  .note{position:fixed;right:16px;bottom:72px;max-width:280px;background:var(--bg);border:1px solid var(--line-strong);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--ink-2);box-shadow:0 4px 16px oklch(0.2 0.01 80 / .08)}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <b>ISO Cab Builder</b>
+  <div class="ctl">Design <select><option>Mesa 4x12 box</option></select></div>
+  <div class="ctl">Version <select class="num"><option>v3 (editing)</option><option>v2</option><option>v1</option></select></div>
+  <button class="btn">Save as v4</button>
+  <div class="sp"></div>
+  <div class="ctl">Compare with <select><option>v2</option><option>none</option></select></div>
+  <div class="ctl">Units <select><option>mm</option><option>in</option></select></div>
+</header>
+
+<nav class="steps">
+  <div class="step done"><span class="n">✓</span>Cab</div>
+  <div class="step done"><span class="n">✓</span>Walls</div>
+  <div class="step on"><span class="n">3</span>Interior</div>
+  <div class="step"><span class="n">4</span>Doors</div>
+  <div class="step"><span class="n">5</span>Acoustics</div>
+  <div class="step"><span class="n">6</span>Cut list</div>
+</nav>
+
+<div class="main">
+  <aside>
+    <h3>Pick a wall</h3>
+    <div class="net">
+      <div></div><div class="face" data-w="top">Top<span class="badge">1</span></div><div></div><div></div>
+      <div class="face sel" data-w="left">Left<span class="badge" id="lbadge">2</span></div>
+      <div class="face door" title="Front is the door; set it in step 4">Front</div>
+      <div class="face" data-w="right">Right<span class="badge">3</span></div>
+      <div class="face" data-w="back">Back<span class="badge">1</span></div>
+      <div></div><div class="face" data-w="bottom">Bottom<span class="badge">1</span></div><div></div><div></div>
+    </div>
+    <p class="hint">Numbers show facets per wall. Click a wall here or in the views.</p>
+
+    <h3>Left wall, inner face</h3>
+    <div class="row"><label>Split along</label>
+      <div class="seg"><button class="on">Depth</button><button>Height</button></div>
+    </div>
+    <div class="row"><label>Facets</label>
+      <div class="stepper"><button id="minus" aria-label="Fewer facets">−</button><span class="num" id="count">2</span><button id="plus" aria-label="More facets">+</button></div>
+      <button class="btn" id="even" style="font-size:12px">Split evenly</button>
+    </div>
+
+    <table>
+      <thead><tr><th>#</th><th>Width</th><th style="width:40%">Tilt</th><th>Hinge</th></tr></thead>
+      <tbody id="facets"></tbody>
+    </table>
+    <p class="hint num" id="sum"></p>
+    <p class="hint">Tilt turns the facet inward about its hinge edge. Outer shell stays square.</p>
+
+    <details>
+      <summary>Extra inner panels <span class="unit">1 added</span></summary>
+      <p class="hint">Baffle 1: 18 mm ply + 50 mm rockwool, 600 mm from left, full height.</p>
+      <button class="btn" style="margin-top:6px">+ Add panel</button>
+    </details>
+    <details>
+      <summary>Acoustic materials <span class="unit">2 surfaces treated</span></summary>
+      <p class="hint">Back: Rockwool RW3 50 mm. Top: foam 30 mm. Edit absorption per material in the library.</p>
+      <button class="btn" style="margin-top:6px">+ Treat a surface</button>
+    </details>
+  </aside>
+
+  <section class="stage">
+    <div class="viewbar">
+      <div class="seg"><button class="on">Plan + 3D</button><button>Front</button><button>Side</button><button>3D only</button></div>
+      <label class="ctl"><input type="checkbox" checked> Show cab</label>
+      <label class="ctl"><input type="checkbox"> Show v2 outline</label>
+      <div class="sp"></div>
+      <span class="ctl num">Inner free space at narrowest: <b id="clear">1,214 mm</b></span>
+    </div>
+    <div class="views">
+      <div class="view">
+        <span class="lbl">Plan section, cut at mid-height</span>
+        <svg id="plan" viewBox="0 0 560 380" aria-label="Plan section of the box"></svg>
+      </div>
+      <div class="view">
+        <span class="lbl">3D, cut-away</span>
+        <div class="placeholder3d">Orbit / cut-away / exploded 3D view<br>(selected wall highlighted, facets drawn)</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<footer class="modes">
+  <div class="status"><span class="dot"></span>Simulation up to date · 0.8 s</div>
+  <div class="mlist num">
+    <span class="m"><b>118 Hz</b> −4 dB <span class="d">▼ vs v2</span></span>
+    <span class="m"><b>171 Hz</b> −1 dB <span class="d">▼</span></span>
+    <span class="m"><b>206 Hz</b> +2 dB <span class="u">▲ watch</span></span>
+    <span class="m"><b>244 Hz</b> −6 dB <span class="d">▼</span></span>
+    <span class="m"><b>297 Hz</b> new</span>
+  </div>
+  <div class="legend"><span><span class="sw"></span>v3</span><span><span class="sw cmp"></span>v2</span><button class="btn">Open Acoustics</button></div>
+</footer>
+
+<div class="note">Mockup: change facets, widths and tilts on the left. Plan view redraws. Mode numbers below are placeholders.</div>
+
+<script>
+// ponytail: throwaway mockup geometry, left wall split along depth only
+const D = 360, W = 1300, wallT = 52; // inner depth, inner width, wall stack thickness (mm)
+let facets = [{w:180,a:4,h:'front'},{w:180,a:7,h:'back'}];
+const tb = document.getElementById('facets');
+function render(){
+  tb.innerHTML = facets.map((f,i)=>`
+    <tr class="facet" data-i="${i}">
+      <td>${i+1}</td>
+      <td><input type="number" value="${f.w}" data-k="w" data-i="${i}"><span class="unit"> mm</span></td>
+      <td><input type="range" min="0" max="20" step="0.5" value="${f.a}" data-k="a" data-i="${i}" aria-label="Tilt facet ${i+1}"><div class="unit num">${f.a.toFixed(1)}°</div></td>
+      <td><select data-k="h" data-i="${i}"><option ${f.h==='front'?'selected':''}>front</option><option ${f.h==='back'?'selected':''}>back</option></select></td>
+    </tr>`).join('');
+  const sum = facets.reduce((s,f)=>s+f.w,0);
+  document.getElementById('sum').innerHTML = sum===D ? `Widths add up to ${D} mm inner depth.` : `<span style="color:var(--warn)">Widths add up to ${sum} mm, wall is ${D} mm.</span>`;
+  document.getElementById('count').textContent = facets.length;
+  document.getElementById('lbadge').textContent = facets.length;
+  draw();
+}
+function draw(){
+  const s = 0.36, ox = 70, oy = 60;              // scale & origin
+  const X = x=>ox+x*s, Y = y=>oy+y*s*2.4;         // depth exaggerated so facets are visible
+  let pts = [], y = 0, maxIn = 0;
+  facets.forEach(f=>{
+    const out = f.w*Math.tan(f.a*Math.PI/180);
+    maxIn = Math.max(maxIn,out);
+    if(f.h==='front'){ pts.push([0,y],[out,y+f.w]); } else { pts.push([out,y],[0,y+f.w]); }
+    y += f.w;
+  });
+  const poly = pts.map(p=>`${X(p[0])},${Y(p[1])}`).join(' ');
+  const iw = W, ih = D;
+  document.getElementById('clear').textContent = Math.round(W-maxIn-20).toLocaleString()+' mm';
+  document.getElementById('plan').innerHTML = `
+    <rect x="${X(-wallT)}" y="${Y(-wallT/2.4)}" width="${(iw+2*wallT)*s}" height="${(ih+wallT/1.2)*s*2.4}" fill="oklch(0.9 0.006 80)" stroke="oklch(0.72 0.008 80)"/>
+    <rect x="${X(0)}" y="${Y(0)}" width="${iw*s}" height="${ih*s*2.4}" fill="oklch(0.975 0.004 80)" stroke="oklch(0.72 0.008 80)"/>
+    <rect x="${X(250)}" y="${Y(10)}" width="${800*s}" height="${330*s*2.4}" fill="none" stroke="oklch(0.6 0.01 80)" stroke-dasharray="4 3"/>
+    <text x="${X(650)}" y="${Y(180)}" text-anchor="middle" font-size="12" fill="oklch(0.6 0.01 80)">cab (loose)</text>
+    <line x1="${X(1200)}" y1="${Y(0)}" x2="${X(1200)}" y2="${Y(D)}" stroke="oklch(0.45 0.01 80)" stroke-width="4"/>
+    <text x="${X(1190)}" y="${Y(D/2)}" text-anchor="end" font-size="11" fill="oklch(0.45 0.01 80)">baffle 1</text>
+    <polygon points="${X(0)},${Y(0)} ${poly} ${X(0)},${Y(D)}" fill="oklch(0.93 0.035 45)" stroke="oklch(0.55 0.13 45)" stroke-width="1.5"/>
+    ${facets.map((f,i)=>{let y0=facets.slice(0,i).reduce((s,g)=>s+g.w,0);return `<text x="${X(-wallT-8)}" y="${Y(y0+f.w/2)+4}" text-anchor="end" font-size="12" fill="oklch(0.55 0.13 45)">${i+1}: ${f.a}°</text>`}).join('')}
+    <text x="${X(iw/2)}" y="${Y(-wallT/2.4)-8}" text-anchor="middle" font-size="11" fill="oklch(0.45 0.01 80)">back</text>
+    <text x="${X(iw/2)}" y="${Y(D)+30}" text-anchor="middle" font-size="11" fill="oklch(0.45 0.01 80)">front (door)</text>`;
+}
+tb.addEventListener('input',e=>{
+  const i=+e.target.dataset.i,k=e.target.dataset.k; if(isNaN(i))return;
+  facets[i][k] = k==='h' ? e.target.value : +e.target.value;
+  if(k==='a'){ e.target.nextElementSibling.textContent = (+e.target.value).toFixed(1)+'°'; draw(); }
+  else render();
+});
+document.getElementById('plus').onclick=()=>{ if(facets.length<8){facets.push({w:0,a:0,h:'front'}); even();} };
+document.getElementById('minus').onclick=()=>{ if(facets.length>1){facets.pop(); even();} };
+document.getElementById('even').onclick=()=>even();
+function even(){ const n=facets.length; facets.forEach((f,i)=>f.w = i<n-1 ? Math.floor(D/n) : D-Math.floor(D/n)*(n-1)); render(); }
+render();
+</script>
+</body>
+</html>
