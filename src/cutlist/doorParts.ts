@@ -16,12 +16,15 @@ type DoorPart = Omit<Part, 'id'>
 export function doorParts(d: Design, lib: Library): { parts: DoorPart[]; hardware: HardwareItem[] } {
   const parts: DoorPart[] = []
   const hw = new Map<string, HardwareItem>()
-  const addHw = (name: string, qty: number, unit: 'pcs' | 'm') => {
+  const addHw = (name: string, qty: number, unit: 'pcs' | 'm', type?: HardwareItem['type']) => {
     if (qty <= 0) return
-    const cur = hw.get(name)
+    const key = `${name}|${type ? `${type.kind}:${type.id}` : ''}`
+    const cur = hw.get(key)
     if (cur) cur.qty = r2(cur.qty + qty)
-    else hw.set(name, { name, qty: r2(qty), unit })
+    else hw.set(key, { name, qty: r2(qty), unit, ...(type ? { type } : {}) })
   }
+  const hinge = (id: string): HardwareItem['type'] => ({ kind: 'hinge', id })
+  const latch = (id: string): HardwareItem['type'] => ({ kind: 'latch', id })
   const matName = (id: string) => lib.materials.find((m) => m.id === id)?.name ?? id
   /** Adds a part; one with no length, width or thickness (a frame head of a too-narrow opening) is left out. */
   const add = (p: Omit<DoorPart, 'step' | 'warnings' | 'bevels' | 'qty' | 'notes'> & { qty?: number; notes?: string[] }) => {
@@ -40,8 +43,8 @@ export function doorParts(d: Design, lib: Library): { parts: DoorPart[]; hardwar
   if (door.kind === 'wall') {
     const w = door.wall!
     const cfg = d.door.outer
-    addHw(hingeName(cfg.hingeTypeId), w.hinges.length, 'pcs')
-    addHw(latchName(cfg.latchTypeId), w.latches.length, 'pcs')
+    addHw(hingeName(cfg.hingeTypeId), w.hinges.length, 'pcs', hinge(cfg.hingeTypeId))
+    addHw(latchName(cfg.latchTypeId), w.latches.length, 'pcs', latch(cfg.latchTypeId))
     const seal = sealType(cfg.sealTypeId)?.name ?? cfg.sealTypeId
     for (const s of w.seals) addHw(`${seal} (${s.line})`, s.perimeterMm / 1000, 'm')
     return { parts, hardware: [...hw.values()] }
@@ -87,8 +90,8 @@ export function doorParts(d: Design, lib: Library): { parts: DoorPart[]; hardwar
     }
 
     const hingeCount = leaf.hinges.reduce((a, e) => a + e.positions.length, 0)
-    addHw(hingeName(cfg.hingeTypeId), hingeCount, 'pcs')
-    addHw(latchName(cfg.latchTypeId), leaf.latches.length, 'pcs')
+    addHw(hingeName(cfg.hingeTypeId), hingeCount, 'pcs', hinge(cfg.hingeTypeId))
+    addHw(latchName(cfg.latchTypeId), leaf.latches.length, 'pcs', latch(cfg.latchTypeId))
     const perimeter = leaf.leaves.reduce((a, l) => a + 2 * (l.w + l.h), 0)
     addHw(seal?.name ?? cfg.sealTypeId, perimeter / 1000, 'm')
   }

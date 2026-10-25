@@ -27,7 +27,14 @@ export type Part = {
   notes: string[]
   warnings: string[]
 }
-export type HardwareItem = { name: string; qty: number; unit: 'pcs' | 'm'; step?: BuildStep }
+/** `type`: the library hinge or latch the line counts, for its weight. */
+export type HardwareItem = {
+  name: string
+  qty: number
+  unit: 'pcs' | 'm'
+  step?: BuildStep
+  type?: { kind: 'hinge' | 'latch'; id: string }
+}
 
 export const STEP_ORDER: BuildStep[] = ['shell', 'middle', 'liner', 'facets', 'panels', 'treatment', 'doors']
 
@@ -56,11 +63,11 @@ type Draft = Omit<Part, 'id' | 'warnings' | 'qty' | 'bevels' | 'notes' | 'kind' 
 export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]; hardware: HardwareItem[] } {
   const drafts: Draft[] = []
   const hw = new Map<string, HardwareItem>()
-  const addHw = (name: string, qty: number, unit: 'pcs' | 'm', step?: BuildStep) => {
-    const key = `${name}|${step ?? ''}`
+  const addHw = (name: string, qty: number, unit: 'pcs' | 'm', step?: BuildStep, type?: HardwareItem['type']) => {
+    const key = `${name}|${step ?? ''}|${type ? `${type.kind}:${type.id}` : ''}`
     const cur = hw.get(key)
     if (cur) cur.qty += qty
-    else hw.set(key, step ? { name, qty, unit, step } : { name, qty, unit })
+    else hw.set(key, { name, qty, unit, ...(step ? { step } : {}), ...(type ? { type } : {}) })
   }
   const { inner } = resolveDims(d)
   const door = doorLayout(d, lib)
@@ -243,7 +250,7 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
       kind: p.kind, qty: p.qty, notes: p.notes,
     })
   }
-  for (const h of dp.hardware) addHw(h.name, h.qty, h.unit)
+  for (const h of dp.hardware) addHw(h.name, h.qty, h.unit, undefined, h.type)
 
   // ---- finish: kinds, rounding, warnings, merge, ids ----
   const finished: Part[] = drafts.map((dr) => {

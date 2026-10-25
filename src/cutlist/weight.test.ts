@@ -24,7 +24,16 @@ function handSum(d: Design) {
     const latch = lib.latches.find((x) => x.name === h.name)
     kg += h.qty * (hinge?.weightKg ?? latch?.weightKg ?? 0)
   }
-  return kg
+  return kg - openingsKg(d)
+}
+
+/** What the door openings take out of the door wall layers (hand-computed for the default left door). */
+function openingsKg(d: Design) {
+  const l = doorLayout(d, lib)
+  if (!l.inner || !l.outer) return 0
+  const clear = l.inner.opening, pocket = l.inner.pocket!
+  // MDF (inner 18 mm) is cut to the pocket; plywood is cut to the clear opening for 12 mm and routed to the pocket for 6.
+  return (dens('mdf') * pocket.w * pocket.h * 18 + dens('plywood') * (clear.w * clear.h * 12 + pocket.w * pocket.h * 6)) / 1e9
 }
 
 describe('buildWeight', () => {
@@ -38,8 +47,32 @@ describe('buildWeight', () => {
     expect(w.heaviestPart!.kg).toBeGreaterThan(0)
   })
 
+  it('door openings are not weighed: the cut-out area of each door wall layer is taken off', () => {
+    const d = defaultDesign()
+    const full = buildParts(d, lib, shop).parts.reduce((a, p) => a + ((p.length * p.width * p.thickness) / 1e9) * dens(p.materialId) * p.qty * (p.kind === 'wedge' || /wedge/.test(p.notes.join(' ')) ? 0.5 : 1), 0)
+    const w = buildWeight(d, lib, shop)
+    expect(openingsKg(d)).toBeGreaterThan(5)
+    expect(Math.abs(w.totalKg - w.hardwareKg - (full - openingsKg(d)))).toBeLessThan(0.1)
+    d.door.kind = 'wall'
+    expect(Math.abs(buildWeight(d, lib, shop).totalKg - handSum(d))).toBeLessThan(0.1)
+  })
+
+  it('hinge and latch weights are looked up by type id, not by name', () => {
+    const d = defaultDesign()
+    const l2 = defaultLibrary()
+    // A second hinge with the same name but heavier, used by both leaves.
+    l2.hinges.push({ ...l2.hinges[0], id: 'twin', weightKg: 2 })
+    d.door.outer.hingeTypeId = 'twin'
+    d.door.inner.hingeTypeId = 'twin'
+    const hinges = doorLayout(d, l2)
+    const count = [hinges.outer!, hinges.inner!].reduce((a, x) => a + x.hinges.reduce((b, e) => b + e.positions.length, 0), 0)
+    const latchKg = [hinges.outer!, hinges.inner!].reduce((a, x) => a + x.latches.length, 0) * l2.latches.find((x) => x.id === d.door.outer.latchTypeId)!.weightKg
+    expect(buildWeight(d, l2, shop).hardwareKg).toBeCloseTo(count * 2 + latchKg, 1)
+  })
+
   it('an MLV layer adds its mass', () => {
     const d = defaultDesign()
+    d.door.kind = 'wall' // no door cutouts: the walls are whole blocks
     const before = buildWeight(d, lib, shop).totalKg
     const area = (dd: Design) =>
       buildParts(dd, lib, shop).parts.filter((p) => p.materialId === 'mlv').reduce((a, p) => a + (p.length * p.width * p.qty) / 1e6, 0)
@@ -87,6 +120,7 @@ describe('buildWeight', () => {
 
   it('isolation clips are counted under the box they belong to', () => {
     const d = defaultDesign()
+    d.door.kind = 'wall' // no door cutouts: the walls are whole blocks
     d.wallDefault = [
       { kind: 'layer', materialId: 'plywood', thickness: 18 },
       { kind: 'gap', width: 25, decoupling: 'clips', fill: 'empty', fillMaterialId: 'rockwool' },

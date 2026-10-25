@@ -1,7 +1,9 @@
 import { doorLayout } from '../doors/doors'
+import { boxBounds, boxPart, panelPieces, wallBoxes } from '../geometry/boxes'
+import type { Vec3 } from '../model/schema'
 import { CLIP_WEIGHT_KG } from '../model/defaults'
 import type { Design, Library, Shop } from '../model/schema'
-import { buildParts, STEP_ORDER, type BuildStep, type Part } from './parts'
+import { buildParts, STEP_ORDER, type BuildStep, type HardwareItem, type Part } from './parts'
 
 export type WeightReport = {
   totalKg: number
@@ -28,7 +30,8 @@ function partKg(p: Part, density: number): number {
 }
 
 /**
- * Estimated mass of the whole build, excluding cabs. Hinges and latches use the library weight per
+ * Estimated mass of the whole build, excluding cabs. Door wall layers lose what their door cutouts and
+ * routed rebates remove (the heaviest-part figure still uses the whole block). Hinges and latches use the library weight per
  * piece, isolation clips use CLIP_WEIGHT_KG. Seal tape and sealant (sold by the metre) are ignored as negligible.
  */
 export function buildWeight(d: Design, lib: Library, shop: Shop): WeightReport {
@@ -36,6 +39,12 @@ export function buildWeight(d: Design, lib: Library, shop: Shop): WeightReport {
   const density = (id: string) => lib.materials.find((m) => m.id === id)?.density ?? 0
   const hingeKg = (name: string) => lib.hinges.find((h) => h.name === name)?.weightKg
   const latchKg = (name: string) => lib.latches.find((l) => l.name === name)?.weightKg
+  /** Weight of one piece: by library id when the line names its type, else by name. */
+  const pieceKg = (h: HardwareItem) => {
+    if (h.name === 'Isolation clip') return CLIP_WEIGHT_KG
+    if (h.type) return (h.type.kind === 'hinge' ? lib.hinges : lib.latches).find((x) => x.id === h.type!.id)?.weightKg ?? 0
+    return hingeKg(h.name) ?? latchKg(h.name) ?? 0
+  }
 
   const step = new Map<BuildStep, number>()
   const material = new Map<string, number>()
@@ -53,11 +62,24 @@ export function buildWeight(d: Design, lib: Library, shop: Shop): WeightReport {
   let hardwareKg = 0
   for (const h of hardware) {
     if (h.unit !== 'pcs') continue
-    const each = h.name === 'Isolation clip' ? CLIP_WEIGHT_KG : (hingeKg(h.name) ?? latchKg(h.name) ?? 0)
+    const each = pieceKg(h)
     hardwareKg += each * h.qty
     // Clips carry their box's step; hinges and latches belong to the doors.
     const at: BuildStep = h.step ?? 'doors'
     step.set(at, (step.get(at) ?? 0) + each * h.qty)
+  }
+  // Door openings: parts are whole blocks, so take off what the cutouts (and routed rebates) remove.
+  const boxes = boxBounds(d).length
+  const block = (min: Vec3, max: Vec3) => (max.x - min.x) * (max.y - min.y) * (max.z - min.z)
+  for (const p of wallBoxes(d, lib)) {
+    if (!p.cutout && !p.rebate) continue
+    const built = panelPieces(p).reduce((a, q) => a + block(q.min, q.max), 0)
+    const kg = ((block(p.min, p.max) - built) / 1e9) * density(p.materialId)
+    if (kg <= 0) continue
+    partsKg -= kg
+    const at: BuildStep = boxPart(p.boxIndex, boxes)
+    step.set(at, (step.get(at) ?? 0) - kg)
+    material.set(p.materialId, (material.get(p.materialId) ?? 0) - kg)
   }
   const total = partsKg + hardwareKg
 
