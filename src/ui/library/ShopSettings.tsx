@@ -1,4 +1,5 @@
 import { effect, signal } from '@preact/signals'
+import { DEFAULT_NEW_STOCK } from '../../model/defaults'
 import { library, shop, updateShop } from '../../model/store'
 import { NumberField } from '../NumberField'
 import { libraryOpen } from './MaterialLibrary'
@@ -29,7 +30,7 @@ export function ShopSettings() {
           type="button"
           class="btn"
           onClick={() =>
-            updateShop((x) => void x.sheets.push({ materialId: mats[0]?.id ?? '', thickness: 18, length: 2440, width: 1220 }))
+            updateShop((x) => void x.sheets.push({ materialId: mats[0]?.id ?? '', ...DEFAULT_NEW_STOCK }))
           }
         >
           + Add stock

@@ -273,6 +273,7 @@ aside.doorside .collisions p{margin:2px 0}
 .printroot{display:none}
 
 @media print{
+  html,body,#app{height:auto;overflow:visible}
   body[data-print] #app{display:block;height:auto;min-width:0}
   body[data-print] #app>*:not(.printroot){display:none!important}
   body[data-print] .printroot{display:block}
@@ -289,3 +290,4 @@ aside.doorside .collisions p{margin:2px 0}
 }
 @page a3sheet{size:A3 landscape;margin:0}
 @page a4list{size:A4 portrait;margin:12mm}
+.more .menu>input[hidden]{display:none}

@@ -66,6 +66,9 @@ export function defaultLibrary(): Library {
   }
 }
 
+/** Stock row a new "Add stock" starts from; materialId is filled by the UI. */
+export const DEFAULT_NEW_STOCK = { thickness: 18, length: 2440, width: 1220 }
+
 export function defaultShop(): Shop {
   const sheets: SheetStock[] = []
   for (const m of defaultLibrary().materials) {

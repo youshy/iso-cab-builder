@@ -7,16 +7,8 @@ import {
 import { buildWeight } from '../cutlist/weight'
 import { libraryOpen } from './library/MaterialLibrary'
 import { openShop, shopOpen } from './library/ShopSettings'
+import { download } from './download'
 import { exportProject, importProject } from '../storage/io'
-
-function download(name: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  a.click()
-  URL.revokeObjectURL(url)
-}
 
 const weightKg = computed(() => buildWeight(design.value, library.value, shop.value).totalKg)
 /** Weight change against the compared version, or null with no comparison. */
@@ -30,6 +22,7 @@ export function TopBar() {
   const [importError, setImportError] = useState<string | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
+  const importRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (!moreOpen) return
     const away = (e: Event) => {
@@ -62,6 +55,11 @@ export function TopBar() {
     addProject(res.project)
   }
 
+  function toggleShop() {
+    if (shopOpen.value) shopOpen.value = false
+    else openShop()
+    setMoreOpen(false)
+  }
   const kg = weightKg.value
   const delta = weightDelta.value
 
@@ -133,16 +131,14 @@ export function TopBar() {
           <button type="button" role="menuitem" aria-pressed={libraryOpen.value} onClick={() => { libraryOpen.value = !libraryOpen.value; setMoreOpen(false) }}>
             Materials
           </button>
-          <button type="button" role="menuitem" aria-pressed={shopOpen.value} onClick={() => { shopOpen.value ? (shopOpen.value = false) : openShop(); setMoreOpen(false) }}>
+          <button type="button" role="menuitem" aria-pressed={shopOpen.value} onClick={toggleShop}>
             Shop settings
           </button>
           <button type="button" role="menuitem" onClick={() => { download(`${project.name}.isocab.json`, exportProject(project, library.value)); setMoreOpen(false) }}>
             Export design
           </button>
-          <label role="menuitem">
-            Import design
-            <input type="file" accept=".json,application/json" hidden onChange={(e) => { setMoreOpen(false); onImport(e) }} />
-          </label>
+          <button type="button" role="menuitem" onClick={() => importRef.current?.click()}>Import design</button>
+          <input ref={importRef} type="file" accept=".json,application/json" hidden onChange={(e) => { setMoreOpen(false); onImport(e) }} />
         </div>
       </div>
     </header>

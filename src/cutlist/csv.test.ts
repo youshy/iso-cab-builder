@@ -25,4 +25,17 @@ describe('partsCsv', () => {
   it('keeps embedded newlines inside the quoted field', () => {
     expect(partsCsv([part({ notes: ['x\ny'] })], matName)).toContain('"x\ny"')
   })
+  it('neutralises spreadsheet formulas in text cells but not numbers', () => {
+    const lib: Record<string, string> = { a: '=HYPERLINK("x")', b: '+1', c: '-2', d: '@SUM(A1)' }
+    const rows = ['a', 'b', 'c', 'd'].map((id) => partsCsv([part({ materialId: id, thickness: -5 })], (m) => lib[m]).split('\r\n')[1])
+    expect(rows[0]).toContain('"\'=HYPERLINK(""x"")"')
+    expect(rows[1]).toContain('"\'+1"')
+    expect(rows[2]).toContain('"\'-2"')
+    expect(rows[3]).toContain('"\'@SUM(A1)"')
+    expect(rows[0]).toContain('"-5"')
+    expect(partsCsv([part({ name: '\tx' })], matName)).toContain('"\'\tx"')
+  })
+  it('keeps non-ASCII text intact', () => {
+    expect(partsCsv([part({ name: 'Panel 22.5° 600×400' })], matName)).toContain('"Panel 22.5° 600×400"')
+  })
 })

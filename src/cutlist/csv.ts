@@ -1,7 +1,11 @@
 import type { Part } from './parts'
 
 const HEADER = ['id', 'name', 'material', 'thickness', 'length', 'width', 'qty', 'bevels', 'notes', 'warnings', 'step']
-const q = (s: string | number) => `"${String(s).replace(/"/g, '""')}"`
+/** Quote a cell. Text starting with = + - @ tab or CR gets a leading ' so spreadsheets do not run it as a formula. */
+const q = (v: string | number) => {
+  const text = typeof v === 'string' && /^[=+\-@\t\r]/.test(v) ? `'${v}` : String(v)
+  return `"${text.replace(/"/g, '""')}"`
+}
 
 /** Parts as CSV: every field quoted, quotes doubled, CRLF rows. Dimensions are mm. */
 export function partsCsv(parts: Part[], matName: (id: string) => string): string {

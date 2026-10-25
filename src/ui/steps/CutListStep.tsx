@@ -5,6 +5,7 @@ import { built, matName, nested, printOnly, sheets } from '../cutlist/data'
 import { HardwareTable, PartsTable } from '../cutlist/PartsTable'
 import { SheetsView } from '../cutlist/SheetsView'
 import { WeightPanel } from '../cutlist/WeightPanel'
+import { download } from '../download'
 import { openShop } from '../library/ShopSettings'
 
 type Tab = 'parts' | 'hardware' | 'sheets' | 'drawings' | 'weight'
@@ -17,13 +18,7 @@ const TABS: { id: Tab; label: string }[] = [
 ]
 
 function exportCsv() {
-  const text = partsCsv(built.value.parts, matName)
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${currentProject.value.name}-parts.csv`
-  a.click()
-  URL.revokeObjectURL(url)
+  download(`${currentProject.value.name}-parts.csv`, partsCsv(built.value.parts, matName), 'text/csv')
 }
 
 export function CutListStep() {
