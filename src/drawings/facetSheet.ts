@@ -76,8 +76,8 @@ function facetBlock(d: Design, w: WallId, tags: PartTags): BlockFn | null {
         const inner = freeAt + dir * Math.min(PACKER_WIDTH, it.f.width)
         pen.poly([[X(freeAt), 0], [X(inner), 0], [X(inner), Y(back(inner))], [X(freeAt), Y(pd)]], 'sec')
         pen.poly([[X(hingeAt), 0], [X(inner), 0], [X(inner), Y(back(inner))]], 'h')
-        // Packing depth under the packer balloon, below the section.
-        pen.text(X(freeAt) + dir * 4, 21, `packing ${fmt(pd)}`, { size: 2, anchor: dir < 0 ? 'end' : 'start' })
+        // Packing depth under the packer balloon, rounded as the packer's thickness in the cut list.
+        pen.text(X(freeAt) + dir * 4, 21, `packing ${fmt(r2(pd))}`, { size: 2, anchor: dir < 0 ? 'end' : 'start' })
         const cx = (2 * hingeAt + inner) / 3
         pen.balloon(it.packer, X((freeAt + inner) / 2), Y(pd / 3), X(freeAt) + dir * 4, 15)
         pen.balloon(it.fill, X(cx), Y(back(cx) / 3), X(cx) - 4, 15)

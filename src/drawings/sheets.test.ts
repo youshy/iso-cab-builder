@@ -70,6 +70,9 @@ const mitre = (): Design => {
   return d
 }
 
+/** The review fixture: facets, panels, treatment, one cavity, split outer door, framed inner door. */
+const review = (): Design => oneCavity()
+
 const balloon = (id: string) => new RegExp(`<text class="bid"[^>]*>${id}</text>`)
 
 /** Minimal XML well-formedness: balanced tags, nothing left open, no bare ampersands. */
@@ -127,6 +130,48 @@ describe('buildSheets coverage', () => {
   })
 })
 
+const fmt = (n: number) => String(Math.round(n * 10) / 10)
+const dimCases: [string, () => Design][] = [
+  ['default design', () => structuredClone(defaultDesign())],
+  ['two-cavity stack', twoCavities],
+  ['wall-door mode', wallDoor],
+  ['mitre joint', mitre],
+  ['review fixture', review],
+]
+
+describe('buildSheets cut sizes', () => {
+  it.each(dimCases)('%s: every ballooned part shows its cut-list length and width on its sheet', (_, make) => {
+    const { parts, sheets } = sheetsOf(make())
+    for (const s of sheets) {
+      const ids = [...s.svg.matchAll(/<text class="bid"[^>]*>(P\d+)<\/text>/g)].map((m) => m[1])
+      for (const id of ids) {
+        const p = parts.find((q) => q.id === id)!
+        expect(s.svg, `${s.title} ${id} ${p.name} length`).toContain(`>${fmt(p.length)}<`)
+        expect(s.svg, `${s.title} ${id} ${p.name} width`).toContain(`>${fmt(p.width)}<`)
+      }
+    }
+  })
+
+  it('facets and doors sheets list cut size, thickness and bevels of every part', () => {
+    const { parts, sheets } = sheetsOf(review())
+    for (const step of ['facets', 'doors'] as const) {
+      const svg = sheets.filter((s) => s.step === step).map((s) => s.svg).join('')
+      expect(svg).toContain('Cut sizes')
+      for (const p of parts.filter((q) => q.step === step)) {
+        expect(svg).toContain(`>${fmt(p.thickness)}<`)
+        for (const b of p.bevels) expect(svg).toContain(`${b.edge} ${fmt(b.angle)}°`)
+      }
+    }
+    const facet = parts.find((p) => p.name === 'Right facet 1')!
+    expect(facet.width).toBe(200.5) // 200 / cos 4°, as cut, not the 200 projected width
+    expect(sheets.find((s) => s.step === 'facets')!.svg).toContain('>200.5<')
+    // packing labels read the same as the packer thickness in the cut list
+    for (const pk of parts.filter((p) => /packer/.test(p.name))) {
+      expect(sheets.find((s) => s.step === 'facets')!.svg).toContain(`packing ${fmt(pk.thickness)}`)
+    }
+  })
+})
+
 describe('buildSheets order and presence', () => {
   const steps = (ss: Sheet[]) => ss.map((s) => s.step)
 
@@ -160,6 +205,26 @@ describe('buildSheets content', () => {
     const ov = sheetsOf(d).sheets[0]
     expect(ov.step).toBe('overview')
     for (const v of [outer.x, outer.y, outer.z]) expect(ov.svg).toContain(`>${String(Math.round(v * 10) / 10)}<`)
+  })
+
+  it('overview draws a right-side view when the door is on the right wall', () => {
+    const d = structuredClone(defaultDesign())
+    d.door.side = 'right'
+    const ov = sheetsOf(d).sheets[0]
+    expect(ov.svg).toContain('Right side')
+    expect(ov.svg).toContain('>door<')
+    expect(sheetsOf(structuredClone(defaultDesign())).sheets[0].svg).not.toContain('Right side')
+  })
+
+  it('a drawing too big for A3 at 1:20 is shrunk, marked NOT TO SCALE and reported', () => {
+    const d = structuredClone(defaultDesign())
+    d.dims.mode = 'outside'
+    d.dims.outer = { x: 9000, y: 2400, z: 1200 }
+    const { sheets } = sheetsOf(d)
+    const shell = sheets.find((s) => s.step === 'shell')!
+    expect(shell.svg).toContain('NOT TO SCALE')
+    expect(shell.warnings.join(' ')).toMatch(/not to scale/)
+    expect(sheetsOf(structuredClone(defaultDesign())).sheets.every((x) => x.warnings.length === 0)).toBe(true)
   })
 
   it('title block: name, version, sheet n of N, scale, date, units', () => {

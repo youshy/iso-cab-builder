@@ -7,10 +7,12 @@ import type { Axis, Design, Library, StackItem, WallId } from '../model/schema'
 import { cellsBlock, type Cell } from './cells'
 import { doorBlocks } from './doorSheet'
 import { facetBlocks } from './facetSheet'
-import { fitsOne, fmt, pack, Pen, sheetSvg, type BlockFn } from './svg'
+import { partsTable } from './partsTable'
+import { AREA, fitsOne, fmt, pack, Pen, sheetSvg, type Block, type BlockFn } from './svg'
 import { cap, PartTags, r05 } from './tags'
 
-export type Sheet = { step: BuildStep | 'overview'; title: string; scale: number; svg: string }
+/** `warnings`: drawings on the sheet that had to be shrunk below the sheet scale to fit (marked NOT TO SCALE). */
+export type Sheet = { step: BuildStep | 'overview'; title: string; scale: number; svg: string; warnings: string[] }
 export type SheetOptions = { version?: number | string; date?: string }
 
 /** Printed scales, largest first: a sheet uses the largest one its drawings fit at. */
@@ -59,8 +61,9 @@ export function buildSheets(d: Design, lib: Library, parts: Part[], opts: SheetO
     })
   }
 
+  const facetParts = parts.filter((p) => p.step === 'facets')
   const facets = facetBlocks(d, tags)
-  facets.push(...loose(parts.filter((p) => p.step === 'facets')))
+  facets.push(...loose(facetParts), ...partsTable(facetParts, matName))
   specs.push({ step: 'facets', title: 'Facets', blocks: facets, notes: [
     'Sections across each faceted wall, true scale. Hinge edge sits on the wall face;',
     'the free edge stands off by the packing depth. Facets run the stated length along the wall.',
@@ -74,7 +77,8 @@ export function buildSheets(d: Design, lib: Library, parts: Part[], opts: SheetO
   ] })
 
   const doorSpec: Spec = { step: 'doors', title: 'Doors', blocks: doorBlocks(d, lib, door, tags), notes: [] }
-  doorSpec.blocks.push(...loose(parts.filter((p) => p.step === 'doors')))
+  const doorParts = parts.filter((p) => p.step === 'doors')
+  doorSpec.blocks.push(...loose(doorParts), ...partsTable(doorParts, matName))
   doorSpec.notes = door.kind === 'wall'
     ? ['The whole door wall swings. Its layers are cut on the box sheets.', 'Hinge and latch centres measured from the stated edge.']
     : ['Leaves seen from outside. Hinge and latch centres measured from the stated edge.', 'Seal line runs round the overlap; the inner leaf sits in its rebate.']
@@ -84,14 +88,41 @@ export function buildSheets(d: Design, lib: Library, parts: Part[], opts: SheetO
   return render(specs.filter((s) => stepHasParts(s) && s.blocks.length > 0), d, opts)
 }
 
+const NTS_LABEL = 5
+
+/**
+ * A block too big for the sheet even at the smallest scale, redrawn smaller until it fits, under a
+ * NOT TO SCALE label. Annotations keep their paper size, so the shrink is found by a few passes.
+ */
+function shrinkToFit(fn: BlockFn, s: number): { block: Block; n: number } {
+  let b = fn(s)
+  for (let i = 0; i < 8; i++) {
+    const k = Math.min(AREA.w / b.w, (AREA.h - NTS_LABEL) / b.h)
+    if (k >= 1) break
+    s *= k * 0.97
+    b = fn(s)
+  }
+  const n = Math.round(1 / s)
+  const label = `<text class="hd" x="0" y="3.6" font-size="3.2">NOT TO SCALE (about 1:${n})</text>`
+  return { block: { w: b.w, h: b.h + NTS_LABEL, svg: `${label}<g transform="translate(0 ${NTS_LABEL})">${b.svg}</g>` }, n }
+}
+
 function render(specs: Spec[], d: Design, opts: SheetOptions): Sheet[] {
-  const pages: { spec: Spec; title: string; scaleN: number; placed: ReturnType<typeof pack>[number] }[] = []
+  const pages: { spec: Spec; title: string; scaleN: number; placed: ReturnType<typeof pack>[number]; warnings: string[] }[] = []
   for (const spec of specs) {
     const scaleN = SCALES.find((n) => fitsOne(spec.blocks.map((b) => b(1 / n)))) ?? SCALES[SCALES.length - 1]
-    const laid = pack(spec.blocks.map((b) => b(1 / scaleN)))
+    const warnings: string[] = []
+    const blocks = spec.blocks.map((fn) => {
+      const b = fn(1 / scaleN)
+      if (b.w <= AREA.w && b.h <= AREA.h) return b
+      const { block, n } = shrinkToFit(fn, 1 / scaleN)
+      warnings.push(`${spec.title}: a drawing is too big for A3 at 1:${scaleN}, shown not to scale (about 1:${n}).`)
+      return block
+    })
+    const laid = pack(blocks)
     laid.forEach((placed, i) => {
       const title = laid.length > 1 ? `${spec.title} (${i + 1}/${laid.length})` : spec.title
-      pages.push({ spec, title, scaleN, placed })
+      pages.push({ spec, title, scaleN, placed, warnings: i === 0 ? warnings : [] })
     })
   }
   const date = opts.date ?? new Date().toISOString().slice(0, 10)
@@ -99,6 +130,7 @@ function render(specs: Spec[], d: Design, opts: SheetOptions): Sheet[] {
     step: p.spec.step,
     title: p.title,
     scale: 1 / p.scaleN,
+    warnings: p.warnings,
     svg: sheetSvg({
       title: p.title, name: d.name, version: opts.version, sheet: i + 1, sheets: pages.length,
       scaleN: p.scaleN, date, notes: p.spec.notes,
@@ -159,18 +191,20 @@ function overview(d: Design, bounds: BoxBounds[], door: DoorLayout, matName: (id
   const o = bounds[0].outer, c = bounds[bounds.length - 1].cavity
   // The door opening as seen on the view of its wall: the outer cutout (dual) or the whole wall (wall door).
   const opening = door.outer ? door.outer.cutout : null
-  const view = (title: string, h: Axis, v: Axis, flipV: boolean, labels: [string, string], wall?: WallId): BlockFn => (s) => {
+  const view = (title: string, h: Axis, v: Axis, flipV: boolean, labels: [string, string], wall?: WallId, flipH = false): BlockFn => (s) => {
     const pen = new Pen()
     pen.text(0, -4, title, { size: 3.2, cls: 'hd' })
     const H = (outer[v]) * s
-    const X = (m: number) => (m - o[h][0]) * s
+    // flipH: seen from the high end of the axis normal to the view, so `h` runs right to left.
+    const X = (m: number) => (flipH ? o[h][1] - m : m - o[h][0]) * s
     const Y = (m: number) => (flipV ? (m - o[v][0]) * s : H - (m - o[v][0]) * s)
-    pen.rect(X(o[h][0]), Y(o[v][0]), outer[h] * s, (flipV ? 1 : -1) * outer[v] * s, 'o')
-    pen.rect(X(c[h][0]), Y(c[v][0]), inner[h] * s, (flipV ? 1 : -1) * inner[v] * s, 'h')
+    const hs = flipH ? -1 : 1
+    pen.rect(X(o[h][0]), Y(o[v][0]), hs * outer[h] * s, (flipV ? 1 : -1) * outer[v] * s, 'o')
+    pen.rect(X(c[h][0]), Y(c[v][0]), hs * inner[h] * s, (flipV ? 1 : -1) * inner[v] * s, 'h')
     const W = outer[h] * s
     if (wall && wall === door.side && opening) {
       const [ch, cv] = [inner[h] / 2, inner.y / 2]
-      pen.rect(X(ch - opening.w / 2), Y(cv + opening.h / 2), opening.w * s, opening.h * s, 'c')
+      pen.rect(X(ch - opening.w / 2), Y(cv + opening.h / 2), hs * opening.w * s, opening.h * s, 'c')
       pen.text(X(ch), Y(cv), 'door', { size: 2.2, anchor: 'middle' })
     } else if (wall && wall === door.side) {
       pen.text(W / 2, H / 2, 'door wall', { size: 2.2, anchor: 'middle' })
@@ -195,6 +229,7 @@ function overview(d: Design, bounds: BoxBounds[], door: DoorLayout, matName: (id
     blocks: [
       view('Front', 'x', 'y', false, ['left', 'right'], 'front'),
       view('Left side', 'z', 'y', false, ['back', 'front'], 'left'),
+      ...(door.side === 'right' ? [view('Right side', 'z', 'y', false, ['front', 'back'], 'right', true)] : []),
       view('Plan from above', 'x', 'z', true, ['back left', 'back right']),
     ],
     notes: [
