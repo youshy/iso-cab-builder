@@ -179,7 +179,7 @@ aside.interiorside summary .unit{font-weight:400;margin-left:6px}
 .readout{margin-top:12px}
 /* 3D view */
 .view3d{flex:1;min-height:0;width:100%;overflow:hidden}
-.view3dmode{position:absolute;top:6px;right:8px;z-index:1}
+.view3dmode{position:absolute;top:6px;right:8px;z-index:1;display:flex;gap:6px;align-items:center}
 .view3dpanel .lbl{z-index:1}
 .legend3d{position:absolute;left:12px;bottom:10px;margin:0;padding:6px 8px;list-style:none;font-size:12px;color:var(--ink-2);background:color-mix(in oklch,var(--bg) 85%,transparent);border:1px solid var(--line);border-radius:6px;pointer-events:none}
 .legend3d li{display:flex;align-items:center;gap:6px}

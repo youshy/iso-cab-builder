@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { defaultDesign, defaultLibrary } from '../model/defaults'
-import type { Design, WallInterior } from '../model/schema'
+import { buildParts } from '../cutlist/parts'
+import { defaultDesign, defaultLibrary, defaultShop } from '../model/defaults'
+import type { Design, StackItem, WallInterior } from '../model/schema'
 import { resolveDims } from './dimensions'
 import { buildScene as scene } from './mesh'
 import { stackThickness, wallStack } from './walls'
@@ -142,6 +143,81 @@ describe('buildScene', () => {
         expect(s.vertices[i + 2]).toBeLessThanOrEqual(hi.z + 1e-6)
       }
     }
+  })
+
+  describe('nested boxes', () => {
+    const gap = (width: number): StackItem[] => [
+      { kind: 'layer', materialId: 'plywood', thickness: 18 },
+      { kind: 'gap', width, decoupling: 'clips', fill: 'empty', fillMaterialId: 'rockwool' },
+      { kind: 'layer', materialId: 'mdf', thickness: 18 },
+    ]
+    const r = (s: { vertices: number[] }, axis: 0 | 1 | 2): [number, number] => {
+      const v = s.vertices.filter((_, i) => i % 3 === axis)
+      return [Math.min(...v), Math.max(...v)]
+    }
+    const one = (d: Design, name: string) => buildScene(d).solids.find((x) => x.name === name)!
+
+    it('with a gap the liner is its own box inside the shell box', () => {
+      const d = base()
+      d.wallDefault = gap(100)
+      const { inner } = resolveDims(d)
+      expect(r(one(d, 'left-liner-1'), 1)).toEqual([-18, inner.y + 18])
+      expect(r(one(d, 'left-shell-1'), 1)).toEqual([-136, inner.y + 136])
+      expect(r(one(d, 'top-liner-1'), 0)).toEqual([0, inner.x])
+      expect(r(one(d, 'top-shell-1'), 0)).toEqual([-118, inner.x + 118])
+    })
+
+    it('the joint changes the corners: tops-past runs the top over the sides', () => {
+      const d = base()
+      d.joint = 'tops-past'
+      const { inner } = resolveDims(d)
+      expect(r(one(d, 'left-shell-1'), 1)).toEqual([0, inner.y])
+      expect(r(one(d, 'top-shell-1'), 0)).toEqual([-36, inner.x + 36])
+    })
+
+    it('mitre: layers taper to 45 degrees on joined edges', () => {
+      const d = base()
+      d.joint = 'mitre'
+      const { inner } = resolveDims(d)
+      const ply = one(d, 'left-shell-1')
+      const ys = (x: number) => ply.vertices.filter((_, i) => i % 3 === 1 && Math.abs(ply.vertices[i - 1] - x) < 1e-6)
+      expect([Math.min(...ys(-36)), Math.max(...ys(-36))]).toEqual([-36, inner.y + 36])
+      expect([Math.min(...ys(-18)), Math.max(...ys(-18))]).toEqual([-18, inner.y + 18])
+    })
+
+    // The anti-goal: the cut list must match what is drawn.
+    it('every wall layer solid off the door wall is a cut list part, with matching counts', () => {
+      const r05 = (n: number) => Math.round(n * 2) / 2
+      const designs: Design[] = [base(), base(), base()]
+      designs[1].wallDefault = gap(25)
+      designs[2].joint = 'tops-past'
+      for (const d of designs) {
+        const drawn = new Map<string, number>()
+        for (const s of buildScene(d).solids.filter((x) => x.kind === 'layer' && x.wall !== 'front')) {
+          const [l, w, t] = [r(s, 0), r(s, 1), r(s, 2)].map(([a, b]) => r05(b - a)).sort((a, b) => b - a)
+          const k = `${s.materialId} ${t} ${l} ${w}`
+          drawn.set(k, (drawn.get(k) ?? 0) + 1)
+        }
+        const listed = new Map<string, number>()
+        for (const p of buildParts(d, lib, defaultShop()).parts) {
+          if ((p.step !== 'shell' && p.step !== 'liner') || p.kind === 'strip' || /^Front /.test(p.name)) continue
+          const k = `${p.materialId} ${p.thickness} ${p.length} ${p.width}`
+          listed.set(k, (listed.get(k) ?? 0) + p.qty)
+        }
+        expect(drawn).toEqual(listed)
+      }
+    })
+
+    it('a facet is as long as its cut list part: shortened by earlier walls', () => {
+      const d = base()
+      d.interior.left = twoFacets()
+      d.interior.top = { ...twoFacets(), splitAxis: 'z' }
+      const facet = buildScene(d).solids.find((x) => x.kind === 'facet' && x.wall === 'top')!
+      const [x0, x1] = r(facet, 0)
+      const part = buildParts(d, lib, defaultShop()).parts.find((p) => p.name === 'Top facet 1')!
+      expect(Math.round((x1 - x0) * 2) / 2).toBe(part.length)
+      expect(x1 - x0).toBeLessThan(resolveDims(d).inner.x - 1)
+    })
   })
 
   describe('doors', () => {

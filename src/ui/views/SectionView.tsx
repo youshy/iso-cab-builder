@@ -1,3 +1,4 @@
+import { boxBounds, panelPieces, wallBoxes } from '../../geometry/boxes'
 import { resolveDims } from '../../geometry/dimensions'
 import { facetOffsetAt } from '../../geometry/facets'
 import { cabBox } from '../../geometry/space'
@@ -6,6 +7,7 @@ import { activeInterior, stackThickness, wallNormal, wallStack, WALLS } from '..
 import { SPLIT_GAP, type DoorLayout, type LeafLayout, type WallDoorLayout } from '../../doors/doors'
 import { doorWall, doorWidthAxis, widthEdgeEnd } from '../../doors/side'
 import type { Axis, Design, Vec3, WallId } from '../../model/schema'
+import { library } from '../../model/store'
 
 type View = 'plan' | 'front' | 'side'
 type Props = {
@@ -137,30 +139,47 @@ export function SectionView({ design: d, view, highlight, compare, exaggerate, o
   const treatEls: preact.JSX.Element[] = []
   const treatId = `treat-${view}`
 
-  // Shell: every wall whose normal is on a view axis, drawn as bands outside-in.
+  // Wall layers: the nested boxes (same model as the cut list and 3D view) cut at the middle of the third axis.
+  const mid = inner[cut] / 2
+  const boxes = boxBounds(d)
+  const ringPath = (r: R) => `M${r.x} ${r.y}h${r.width}v${r.height}h${-r.width}z`
+  boxes.slice(0, -1).forEach((b, k) => {
+    // The cavity between box k and box k + 1: a ring from box k's inner face to box k + 1's outer face.
+    const o = b.cavity, i = boxes[k + 1].outer
+    const path = ringPath(rect(o[ha][0], o[ha][1], o[va][0], o[va][1])) + ringPath(rect(i[ha][0], i[ha][1], i[va][0], i[va][1]))
+    shellEls.push(
+      <path key={`gap${k}`} d={path} fill-rule="evenodd" class="sv-gap" fill={`url(#${hatchId})`}>
+        <title>Air gap</title>
+      </path>,
+    )
+  })
+  for (const p of wallBoxes(d, library.value)) {
+    const n = wallNormal(p.wall)
+    if (n !== ha && n !== va) continue
+    const along = n === ha ? va : ha
+    const [lo, hi] = along === p.lengthAxis ? (['W1', 'W2'] as const) : (['L1', 'L2'] as const)
+    const isMin = MIN_WALLS.includes(p.wall)
+    panelPieces(p).forEach((q, i) => {
+      if (mid < q.min[cut] || mid > q.max[cut]) return
+      // Outer face first, then inner face; mitred ends are set in by the taper, so a mitre shows as a trapezoid.
+      const faces: [number, 0 | 1][] = isMin ? [[q.min[n], 0], [q.max[n], 1]] : [[q.max[n], 0], [q.min[n], 1]]
+      const corners = faces.flatMap(([c, f], j) => {
+        const ends = [q.min[along] + q.taper[lo][f], q.max[along] - q.taper[hi][f]]
+        return (j === 0 ? ends : ends.reverse()).map((a) => (n === ha ? pt(c, a) : pt(a, c)))
+      })
+      shellEls.push(
+        <polygon key={`${p.wall}${p.boxIndex}-${p.layerIndex}-${i}`} points={corners.map((c) => c.join(',')).join(' ')} {...pick(p.wall)} class={`sv-layer${highlight === p.wall ? ' sel' : ''}`}>
+          <title>{`${p.wall} wall layer`}</title>
+        </polygon>,
+      )
+    })
+  }
+
   for (const w of WALLS) {
     const n = wallNormal(w)
     if (n !== ha && n !== va) continue
     const isMin = MIN_WALLS.includes(w)
-    const t = thick(d, w)
     const along = n === ha ? va : ha // the other view axis
-    // Walls normal to the horizontal axis run the full outer height; the others span the inner width.
-    const a0 = n === ha ? -lo(d, along) : 0
-    const a1 = n === ha ? inner[along] + hi(d, along) : inner[along]
-    let cum = 0
-    const stack = wallStack(d, w)
-    stack.forEach((item, i) => {
-      const th = item.kind === 'layer' ? item.thickness : item.width
-      const n0 = isMin ? -t + cum : inner[n] + t - cum - th
-      cum += th
-      const r = n === ha ? rect(n0, n0 + th, a0, a1) : rect(a0, a1, n0, n0 + th)
-      const isGap = item.kind === 'gap'
-      shellEls.push(
-        <rect key={`${w}${i}`} {...r} {...pick(w)} class={`${isGap ? 'sv-gap' : 'sv-layer'}${highlight === w ? ' sel' : ''}`} fill={isGap ? `url(#${hatchId})` : undefined}>
-          <title>{isGap ? `${w} wall air gap` : `${w} wall layer`}</title>
-        </rect>,
-      )
-    })
 
     // Facets and treatments for this wall.
     const wi = activeInterior(d, w)

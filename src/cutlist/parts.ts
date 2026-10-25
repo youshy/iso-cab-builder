@@ -1,12 +1,13 @@
 import { doorLayout } from '../doors/doors'
 import { doorWall } from '../doors/side'
+import { AXIS_WALLS, boxBounds, boxPart, cavityOutside, facetSpan, wallBoxes, wallSpan, type BoxPanel, type PanelEdge } from '../geometry/boxes'
 import { resolveDims } from '../geometry/dimensions'
 import { packingDepth, panelLength, steps } from '../geometry/facets'
 import { clampTo, panelPlane } from '../geometry/panels'
-import { panelTreatments, wallIntrusion, wallTreatments } from '../geometry/treatments'
-import { activeInterior, splitStack, wallPlaneAxes, wallStack, WALLS } from '../geometry/walls'
+import { panelTreatments, wallTreatments } from '../geometry/treatments'
+import { activeInterior, wallPlaneAxes, WALLS } from '../geometry/walls'
 import { CLIP_GRID, DECOUPLING_STRIP_MATERIAL, materialOrFirst, PACKER_WIDTH } from '../model/defaults'
-import type { Axis, Design, Layer, Library, Shop, Vec3, WallId } from '../model/schema'
+import type { Design, Library, Shop, WallId } from '../model/schema'
 
 export type BuildStep = 'shell' | 'liner' | 'facets' | 'panels' | 'treatment' | 'doors'
 export type Bevel = { edge: 'L1' | 'L2' | 'W1' | 'W2'; angle: number }
@@ -30,17 +31,12 @@ export type HardwareItem = { name: string; qty: number; unit: 'pcs' | 'm' }
 export const STEP_ORDER: BuildStep[] = ['shell', 'liner', 'facets', 'panels', 'treatment', 'doors']
 
 const STRIP_WIDTH = 50
-/** Walls abutting earlier in this order run through; later ones are cut short. The front wall comes last. */
-const PRIORITY: WallId[] = ['back', 'left', 'right', 'top', 'bottom', 'front']
-const AXIS_WALLS: Record<Axis, [WallId, WallId]> = { x: ['left', 'right'], y: ['bottom', 'top'], z: ['back', 'front'] }
 
 const r05 = (n: number) => Math.round(n * 2) / 2
 const r01 = (n: number) => Math.round(n * 10) / 10
 const r2 = (n: number) => Math.round(n * 100) / 100
 const num = (n: number) => String(r01(n))
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
-const rad = (deg: number) => (deg * Math.PI) / 180
-const sum = (ls: { thickness: number }[]) => ls.reduce((a, l) => a + l.thickness, 0)
 
 type Draft = Omit<Part, 'id' | 'warnings' | 'qty' | 'bevels' | 'notes' | 'kind' | 'length' | 'width'> & {
   a: number
@@ -54,33 +50,6 @@ type Draft = Omit<Part, 'id' | 'warnings' | 'qty' | 'bevels' | 'notes' | 'kind' 
   wall?: WallId
   rest?: string
   notes?: string[]
-}
-
-/** Dimensions and notes of one wall's panel in a box of cavity `c` and per-wall thickness `t`. */
-function boxPanel(w: WallId, c: Vec3, t: Record<WallId, number>, joint: Design['joint']): { a: number; b: number; notes: string[]; mitre: boolean } {
-  const o: Vec3 = { x: c.x + t.left + t.right, y: c.y + t.bottom + t.top, z: c.z + t.back + t.front }
-  const half = (...ws: WallId[]) => ws.reduce((a, k) => a + t[k] / 2, 0)
-  const rebate = (wall: WallId, edges: string) => {
-    const tt = t[wall]
-    return [`rebate ${num(tt / 2)} × ${num(tt)} on ${edges}`]
-  }
-  const m = joint === 'mitre'
-  switch (w) {
-    case 'left': case 'right':
-      if (joint === 'tops-past') return { a: c.y, b: o.z, notes: [], mitre: false }
-      return { a: o.y, b: o.z, notes: [], mitre: m }
-    case 'top': case 'bottom':
-      if (m) return { a: o.x, b: o.z, notes: [], mitre: true }
-      if (joint === 'sides-past') return { a: c.x, b: o.z, notes: [], mitre: false }
-      if (joint === 'rebate') return { a: c.x + half('left', 'right'), b: o.z, notes: rebate(w, 'left and right edges'), mitre: false }
-      return { a: o.x, b: o.z, notes: [], mitre: false }
-    default: // back, front
-      if (m) return { a: o.x, b: o.y, notes: [], mitre: true }
-      if (joint === 'rebate') {
-        return { a: c.x + half('left', 'right'), b: c.y + half('bottom', 'top'), notes: rebate(w, 'all four edges'), mitre: false }
-      }
-      return { a: c.x, b: c.y, notes: [], mitre: false }
-  }
 }
 
 export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]; hardware: HardwareItem[] } {
@@ -108,76 +77,71 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
 
   const push = (dr: Draft) => drafts.push(dr)
 
-  /** Reduction of a wall's span along `axis`: earlier walls at both ends reach in by their intrusion. */
-  const shorten = (w: WallId, axis: Axis) =>
-    AXIS_WALLS[axis].reduce((a, e) => (PRIORITY.indexOf(e) < PRIORITY.indexOf(w) ? a + wallIntrusion(d, e) : a), 0)
-  const span = (w: WallId, axis: Axis) => Math.max(0, inner[axis] - shorten(w, axis))
+  const spanOf = ([o0, o1]: [number, number]) => Math.max(0, o1 - o0)
 
-  // ---- shell and liner boxes ----
-  const T = (pick: (w: WallId) => number) => Object.fromEntries(WALLS.map((w) => [w, pick(w)])) as Record<WallId, number>
-  const split = Object.fromEntries(WALLS.map((w) => [w, splitStack(wallStack(d, w))])) as Record<WallId, ReturnType<typeof splitStack>>
-  const tShell = T((w) => sum(split[w].shell))
-  const tLiner = T((w) => sum(split[w].liner))
-  const tGap = T((w) => split[w].gap?.width ?? 0)
-  const lowHigh = (a: Axis) => AXIS_WALLS[a]
-  const shellCavity = Object.fromEntries(
-    (['x', 'y', 'z'] as Axis[]).map((a) => [a, inner[a] + lowHigh(a).reduce((s, w) => s + tGap[w] + tLiner[w], 0)]),
-  ) as unknown as Vec3
-
-  const doorNote = (w: WallId, part: 'shell' | 'liner'): string[] => {
-    if (w !== dw) return []
+  // ---- wall boxes: one per leaf group, outermost first (shell, middle boxes, liner) ----
+  const boxes = boxBounds(d).length
+  const panels = wallBoxes(d, lib)
+  const extentOf = (p: BoxPanel) => ({
+    a: p.max[p.lengthAxis] - p.min[p.lengthAxis],
+    b: p.max[p.widthAxis] - p.min[p.widthAxis],
+  })
+  const neighbour = (p: BoxPanel, e: PanelEdge): WallId =>
+    AXIS_WALLS[e[0] === 'L' ? p.widthAxis : p.lengthAxis][e[1] === '1' ? 0 : 1]
+  const rebateNote = (p: BoxPanel): string[] => {
+    const edges = p.joinedEdges.filter((e) => e.kind === 'rebate')
+    if (edges.length === 0) return []
+    const tt = panels.filter((q) => q.wall === p.wall && q.boxIndex === p.boxIndex).reduce((s, q) => s + q.thickness, 0)
+    const where = edges.length === 4 ? 'all four edges' : `${edges.map((e) => neighbour(p, e.edge)).join(' and ')} ${edges.length === 1 ? 'edge' : 'edges'}`
+    return [`rebate ${num(tt / 2)} × ${num(tt)} on ${where}`]
+  }
+  const doorNote = (p: BoxPanel): string[] => {
+    if (p.wall !== dw) return []
     if (door.kind === 'wall') return ['hinged wall: see doors step']
-    const leaf = part === 'liner' ? door.inner : door.outer
-    if (!leaf) return []
-    return [`cut opening ${num(leaf.cutout.w)}×${num(leaf.cutout.h)} centred`]
+    if (!p.cutout) return []
+    const [u, v] = [p.cutout.u1 - p.cutout.u0, p.cutout.v1 - p.cutout.v0]
+    const [w, h] = p.lengthAxis === 'y' ? [v, u] : [u, v]
+    return [`cut opening ${num(w)}×${num(h)} centred`]
   }
 
   const stripMaterial = materialOrFirst(lib, DECOUPLING_STRIP_MATERIAL, ['roll'])
-  const addBox = (part: 'shell' | 'liner', cavity: Vec3, t: Record<WallId, number>) => {
-    for (const w of WALLS) {
-      const layers: Layer[] = split[w][part]
-      if (layers.length === 0 || t[w] <= 0) continue
-      const bp = boxPanel(w, cavity, t, d.joint)
-      const bevels: Bevel[] = bp.mitre
-        ? [{ edge: 'L1', angle: 45 }, { edge: 'L2', angle: 45 }, { edge: 'W1', angle: 45 }, { edge: 'W2', angle: 45 }]
-        : []
-      layers.forEach((l, k) => {
-        push({
-          name: `${cap(w)} ${part}, layer ${k + 1} (${matName(l.materialId)})`,
-          wall: w, rest: `${part}, layer ${k + 1} (${matName(l.materialId)})`,
-          materialId: l.materialId, thickness: l.thickness, a: bp.a, b: bp.b, step: part, bevels,
-          notes: [...bp.notes, ...doorNote(w, part)],
-        })
+  for (const p of panels) {
+    const part = boxPart(p.boxIndex, boxes)
+    const label = part === 'middle' ? `middle ${p.boxIndex}` : part
+    const { a, b } = extentOf(p)
+    const rest = `${label}, layer ${p.layerIndex + 1} (${matName(p.materialId)})`
+    push({
+      name: `${cap(p.wall)} ${rest}`, wall: p.wall, rest,
+      materialId: p.materialId, thickness: p.thickness, a, b, step: part === 'shell' ? 'shell' : 'liner',
+      bevels: p.joinedEdges.filter((e) => e.kind === 'mitre').map((e) => ({ edge: e.edge, angle: 45 })),
+      notes: [...rebateNote(p), ...doorNote(p)],
+    })
+    // Decoupling of an inner box from the box outside it, once per wall.
+    const gap = p.layerIndex === 0 ? cavityOutside(d, p.wall, p.boxIndex) : null
+    if (!gap) continue
+    const [L, W] = [Math.max(a, b), Math.min(a, b)]
+    if (gap.decoupling === 'strips') {
+      push({
+        name: 'Decoupling strip', materialId: stripMaterial, thickness: gap.width, a: L, b: STRIP_WIDTH,
+        qty: 2, step: 'liner', kind: 'strip', notes: ['around the liner panel perimeter'],
       })
-      const gap = split[w].gap
-      if (part === 'liner' && gap) {
-        const [L, W] = [Math.max(bp.a, bp.b), Math.min(bp.a, bp.b)]
-        if (gap.decoupling === 'strips') {
-          push({
-            name: 'Decoupling strip', materialId: stripMaterial, thickness: gap.width, a: L, b: STRIP_WIDTH,
-            qty: 2, step: 'liner', kind: 'strip', notes: ['around the liner panel perimeter'],
-          })
-          push({
-            name: 'Decoupling strip', materialId: stripMaterial, thickness: gap.width,
-            a: Math.max(W - 2 * STRIP_WIDTH, 0), b: STRIP_WIDTH, qty: 2, step: 'liner', kind: 'strip',
-            notes: ['around the liner panel perimeter'],
-          })
-        } else {
-          addHw('Isolation clip', Math.max(4, (Math.floor(L / CLIP_GRID) + 1) * (Math.floor(W / CLIP_GRID) + 1)), 'pcs')
-        }
-      }
+      push({
+        name: 'Decoupling strip', materialId: stripMaterial, thickness: gap.width,
+        a: Math.max(W - 2 * STRIP_WIDTH, 0), b: STRIP_WIDTH, qty: 2, step: 'liner', kind: 'strip',
+        notes: ['around the liner panel perimeter'],
+      })
+    } else {
+      addHw('Isolation clip', Math.max(4, (Math.floor(L / CLIP_GRID) + 1) * (Math.floor(W / CLIP_GRID) + 1)), 'pcs')
     }
   }
-  addBox('shell', shellCavity, tShell)
-  addBox('liner', inner, tLiner)
 
   // ---- facets ----
   let sealant = 0
   for (const w of WALLS) {
     const wi = activeInterior(d, w)
     if (!wi) continue
-    const o = wallPlaneAxes(w).find((a) => a !== wi.splitAxis)!
-    const sp = span(w, o)
+    const { o0, o1 } = facetSpan(d, w)
+    const sp = spanOf([o0, o1])
     const label = cap(w)
     wi.facets.forEach((f, i) => {
       const pd = packingDepth(f)
@@ -247,8 +211,8 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
     wallTreatments(d, w).forEach((t, k) => {
       const name = `${cap(w)} treatment ${k + 1}`
       if (wi) {
-        const o = wallPlaneAxes(w).find((a) => a !== wi.splitAxis)!
-        const sp = span(w, o)
+        const { o0, o1 } = facetSpan(d, w)
+        const sp = spanOf([o0, o1])
         wi.facets.forEach((f, i) => {
           push({
             name: `${name} facet ${i + 1}`, materialId: t.materialId, thickness: t.thickness, a: panelLength(f), b: sp,
@@ -257,7 +221,7 @@ export function buildParts(d: Design, lib: Library, shop: Shop): { parts: Part[]
         })
       } else {
         const [u, v] = wallPlaneAxes(w)
-        push({ name, materialId: t.materialId, thickness: t.thickness, a: span(w, u), b: span(w, v), step: 'treatment' })
+        push({ name, materialId: t.materialId, thickness: t.thickness, a: spanOf(wallSpan(d, w, u)), b: spanOf(wallSpan(d, w, v)), step: 'treatment' })
       }
     })
   }
