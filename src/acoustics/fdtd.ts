@@ -5,8 +5,9 @@
  * dt at 0.9x the 3D CFL limit. Each cell carries an air volume fraction and each velocity face an
  * open-area fraction, both from a 4x4x4 sub-sample lattice of the air test, so sub-cell geometry
  * changes move the result continuously. Boundaries are locally reacting with a real admittance from
- * the surface material's octave-band absorption. One run per octave band (125 Hz up to fMax); the
- * runs' power spectra are crossfaded between band centres (a complementary band split) and summed.
+ * the surface material's octave-band (random-incidence) absorption via the Paris statistical formula.
+ * One run per octave band (125 Hz up to fMax); each run's power spectra are divided by the excitation
+ * spectrum |j omega S(f)|^2, then crossfaded between band centres (a complementary band split) and summed.
  * Pure TS, no DOM: runs in a worker.
  */
 import { resolveDims } from '../geometry/dimensions'
@@ -38,14 +39,30 @@ const SEED = 0x1c0ffee
 const BAFFLE = 18 // mm, open-back cab: the only solid part of the cab
 const COURANT = 0.9 / Math.sqrt(3)
 const STABLE = 3.8 // keep (c dt / dx)^2 * spectral radius under this (4 is the leapfrog limit)
+const SAFE_KAPPA = 6 // cut-cell padding that is stable by the row-sum bound
 
 const AXES: Axis[] = ['x', 'y', 'z']
 const planeAxes = (n: Axis): [Axis, Axis] => (n === 'x' ? ['y', 'z'] : n === 'y' ? ['x', 'z'] : ['x', 'y'])
 
-/** Normalised real admittance of a locally reacting surface with absorption alpha (normal incidence). */
-const admittance = (alpha: number) => {
-  const r = Math.sqrt(Math.max(0, 1 - alpha))
-  return (1 - r) / (1 + r)
+/** Paris statistical (random-incidence) absorption of a locally reacting surface with real normalised impedance zeta. */
+const statisticalAlpha = (zeta: number) =>
+  (8 / zeta) * (1 + 1 / (1 + zeta) - (2 / zeta) * Math.log(1 + zeta))
+const ZETA_PEAK = 1.5671 // statisticalAlpha peaks here at about 0.951
+
+/**
+ * Normalised real admittance whose statistical absorption is alpha (library values are random
+ * incidence). Small alpha gives beta of about alpha / 8; alpha above the 0.951 ceiling maps to the peak.
+ */
+export function admittance(alpha: number): number {
+  if (alpha <= 0) return 0
+  if (alpha >= statisticalAlpha(ZETA_PEAK)) return 1 / ZETA_PEAK
+  let lo = Math.log(ZETA_PEAK), hi = Math.log(1e9) // statisticalAlpha falls as zeta grows past the peak
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2
+    if (statisticalAlpha(Math.exp(mid)) > alpha) lo = mid
+    else hi = mid
+  }
+  return 1 / Math.exp((lo + hi) / 2)
 }
 
 function mulberry32(seed: number) {
@@ -244,44 +261,64 @@ function leapfrog(
   }
 }
 
-export function simulate(d: Design, lib: Library, opts: SimOptions, onProgress?: (p: number) => void): SimResult {
+type SliceDef = { axis: Axis; at: number; f: number; w: number; h: number; idx: Int32Array; omega: number }
+type SliceAcc = { re: Float64Array; im: Float64Array }
+
+/** Everything a band run needs, built once per simulation. */
+type Setup = {
+  g: Grid
+  cells: Int32Array // air cells, ascending
+  spans: Int32Array // [start, end) pairs of contiguous air cells
+  k: [Float32Array, Float32Array, Float32Array] // lambda * open fraction per face
+  dt: number
+  steps: number
+  bands: number[]
+  runOf: number[] // band index -> run index
+  runBands: number[] // run index -> representative band index
+  recCells: Int32Array // averaging points first, then probes
+  avgCount: number
+  srcCells: number[]
+  src: Float32Array // source signal per step (zero after its end)
+  slices: SliceDef[]
+  inner: Vec3
+}
+
+function setup(d: Design, lib: Library, opts: SimOptions): Setup {
   const fMax = opts.fMax
-  const duration = opts.duration ?? 0.25
   const bands = BANDS.filter((b) => b / Math.SQRT2 < fMax)
   const g = buildGrid(d, lib, fMax, bands)
   const { nx, ny, nz, NX, NY, N, dx, vol, open } = g
-  const sy = NX, sz = NX * NY
   const cell = (i: number, j: number, k: number) => i + 1 + NX * (j + 1 + NY * (k + 1))
   const dt = (COURANT * dx) / 1000 / C
-  const fs = 1 / dt
-  const steps = Math.max(16, Math.round(duration / dt))
+  const steps = Math.max(16, Math.round((opts.duration ?? 0.25) / dt))
 
   const cellList: number[] = []
   for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (vol[cell(i, j, k)] > 0) cellList.push(cell(i, j, k))
   if (cellList.length === 0) throw new Error('No air in the simulation volume.')
   const cells = Int32Array.from(cellList)
 
-  // Pad small cut cells until the scheme is stable; kappa = 6 is stable by the row-sum bound.
-  let veff = effectiveVolume(g, 8)
-  for (let kappa = 8; kappa > 6; kappa--) {
-    if (COURANT ** 2 * spectralRadius(g, veff, cells) <= STABLE) break
-    veff = effectiveVolume(g, kappa - 1)
+  // Contiguous runs of air cells along x: the update loops walk these with direct indexing.
+  // Closed faces inside a run have a zero coefficient, so they never carry flux.
+  const spanList: number[] = []
+  for (let i = 0; i < cells.length; i++) {
+    if (i === 0 || cells[i] !== cells[i - 1] + 1) spanList.push(cells[i], cells[i] + 1)
+    else spanList[spanList.length - 1] = cells[i] + 1
   }
+  const k = open.map((o) => o.map((v) => COURANT * v)) as Setup['k']
 
   // Receivers and sources, snapped to the nearest air cell.
-  const coords = (c: number): [number, number, number] => {
-    const i = (c % NX) - 1, j = (Math.floor(c / NX) % NY) - 1, k = Math.floor(c / sz) - 1
-    return [i, j, k]
-  }
+  const cellOf = (p: Vec3): [number, number, number] => [
+    Math.min(nx - 1, Math.max(0, Math.floor(p.x / dx))),
+    Math.min(ny - 1, Math.max(0, Math.floor(p.y / dx))),
+    Math.min(nz - 1, Math.max(0, Math.floor(p.z / dx))),
+  ]
   const nearestAir = (p: Vec3): number => {
-    const ci = Math.min(nx - 1, Math.max(0, Math.floor(p.x / dx)))
-    const cj = Math.min(ny - 1, Math.max(0, Math.floor(p.y / dx)))
-    const ck = Math.min(nz - 1, Math.max(0, Math.floor(p.z / dx)))
+    const [ci, cj, ck] = cellOf(p)
     if (vol[cell(ci, cj, ck)] > 0) return cell(ci, cj, ck)
     let best = cells[0], bestD = Infinity
     for (const c of cells) {
-      const [i, j, k] = coords(c)
-      const dd = (i - ci) ** 2 + (j - cj) ** 2 + (k - ck) ** 2
+      const i = (c % NX) - 1, j = (Math.floor(c / NX) % NY) - 1, kk = Math.floor(c / (NX * NY)) - 1
+      const dd = (i - ci) ** 2 + (j - cj) ** 2 + (kk - ck) ** 2
       if (dd < bestD) { bestD = dd; best = c }
     }
     return best
@@ -292,12 +329,11 @@ export function simulate(d: Design, lib: Library, opts: SimOptions, onProgress?:
   const avgCells: number[] = []
   for (let tries = 0; avgCells.length < AVG_POINTS && tries < AVG_POINTS * 500; tries++) {
     const p = { x: rnd() * inner.x, y: rnd() * inner.y, z: rnd() * inner.z }
-    const ci = cell(Math.min(nx - 1, Math.floor(p.x / dx)), Math.min(ny - 1, Math.floor(p.y / dx)), Math.min(nz - 1, Math.floor(p.z / dx)))
-    if (isAir(p) && vol[ci] > 0) avgCells.push(ci)
+    const c = cell(...cellOf(p))
+    if (isAir(p) && vol[c] > 0) avgCells.push(c)
   }
   if (avgCells.length === 0) avgCells.push(cells[0])
-  const probeCells = d.sim.probes.map(nearestAir)
-  const recCells = Int32Array.from([...avgCells, ...probeCells])
+  const recCells = Int32Array.from([...avgCells, ...d.sim.probes.map(nearestAir)])
 
   const cab = d.sim.cabId === '' ? undefined : d.cabs.find((c) => c.id === d.sim.cabId)
   let srcCells: number[]
@@ -310,14 +346,13 @@ export function simulate(d: Design, lib: Library, opts: SimOptions, onProgress?:
   // Differentiated Gaussian (no net volume injected), spectrum peaking at fMax / 2.
   const sigma = 1 / (Math.PI * fMax)
   const t0 = 5 * sigma
-  const src = new Float32Array(Math.min(steps, Math.ceil((2 * t0) / dt) + 1))
-  for (let n = 0; n < src.length; n++) {
+  const src = new Float32Array(steps)
+  for (let n = 0; n < Math.min(steps, Math.ceil((2 * t0) / dt) + 1); n++) {
     const u = (n * dt - t0) / sigma
     src[n] = -u * Math.exp(-0.5 * u * u)
   }
 
-  // Slices: plane cells and per-run running DFT at the slice frequency.
-  const sliceDefs = (opts.slices ?? []).map((s) => {
+  const slices = (opts.slices ?? []).map((s): SliceDef => {
     const [ua, va] = planeAxes(s.axis)
     const dims = { x: nx, y: ny, z: nz }
     const w = dims[ua], h = dims[va]
@@ -332,7 +367,7 @@ export function simulate(d: Design, lib: Library, opts: SimOptions, onProgress?:
     return { ...s, w, h, idx, omega: 2 * Math.PI * s.f * dt }
   })
 
-  // Group bands with identical admittances into one run.
+  // Bands whose admittances match everywhere share one run.
   const runOf: number[] = []
   const runBands: number[] = []
   const sameArea = (a: Float32Array, b: Float32Array) => { for (let c = 0; c < N; c++) if (a[c] !== b[c]) return false; return true }
@@ -342,109 +377,130 @@ export function simulate(d: Design, lib: Library, opts: SimOptions, onProgress?:
     else { runOf.push(runBands.length); runBands.push(b) }
   })
 
-  // Contiguous runs of air cells along x: the update loops walk these with direct indexing.
-  // Closed faces inside a run have a zero coefficient, so they never carry flux.
-  const spanList: number[] = []
-  for (let i = 0; i < cells.length; i++) {
-    if (i === 0 || cells[i] !== cells[i - 1] + 1) spanList.push(cells[i], cells[i] + 1)
-    else spanList[spanList.length - 1] = cells[i] + 1
+  return {
+    g, cells, spans: Int32Array.from(spanList), k, dt, steps, bands, runOf, runBands,
+    recCells, avgCount: avgCells.length, srcCells, src, slices, inner,
   }
-  const spans = Int32Array.from(spanList)
-  const lambda = COURANT
-  const [kx, ky, kz] = open.map((o) => o.map((v) => lambda * v))
+}
 
-  const p = new Float32Array(N)
-  const qx = new Float32Array(N), qy = new Float32Array(N), qz = new Float32Array(N)
+/** Cut-cell volumes for the update: kappa from the caller, else the largest stable one tried (8, 7, 6). */
+function chooseVolumes(s: Setup, kappa?: number): Float32Array {
+  if (kappa !== undefined) return effectiveVolume(s.g, kappa)
+  let veff = effectiveVolume(s.g, 8)
+  for (let kp = 8; kp > SAFE_KAPPA; kp--) {
+    if (COURANT ** 2 * spectralRadius(s.g, veff, s.cells) <= STABLE) break
+    veff = effectiveVolume(s.g, kp - 1)
+  }
+  return veff
+}
+
+/** Time-steps one band; returns the receiver recordings and the slice DFT sums. */
+function runBand(
+  s: Setup, veff: Float32Array, run: number, tick: (stepsDone: number) => void,
+): { recordings: Float32Array[]; slices: SliceAcc[] } {
+  const { g, cells, spans, k: [kx, ky, kz], steps, recCells, srcCells, src } = s
+  const { N, NX, NY } = g
+  const sy = NX, sz = NX * NY
+  const area = g.wallArea[s.runBands[run]]
   const pa = new Float32Array(N), pb = new Float32Array(N)
-  const R = recCells.length
-  const runSpectra: { avg: Float64Array; probes: Float64Array[] }[] = []
-  const runSlices: { re: Float64Array; im: Float64Array }[][] = []
-  let freqs: Float32Array | null = null
-  let bins = 0
-  const recordings = Array.from({ length: R }, () => new Float32Array(steps))
-  const srcScale = srcCells.map((c) => 1 / veff[c])
-  // Exponential window on the responses: kills truncation sidelobes (which would show as fake modes
-  // when walls are nearly rigid) at the cost of a known extra bandwidth, removed again from q below.
-  const tau = (steps * dt) / 4
-  const decay = new Float32Array(steps)
-  for (let n = 0; n < steps; n++) decay[n] = Math.exp(-(n * dt) / tau)
-  const totalSteps = steps * runBands.length
-  let lastReport = -1
-
-  runBands.forEach((band, run) => {
-    const area = g.wallArea[band]
-    for (const c of cells) {
-      const gl = (lambda * area[c]) / (2 * veff[c])
-      pa[c] = (1 - gl) / (1 + gl)
-      pb[c] = lambda / (veff[c] * (1 + gl))
-    }
-    p.fill(0); qx.fill(0); qy.fill(0); qz.fill(0)
-    const acc = sliceDefs.map((s) => ({ re: new Float64Array(s.idx.length), im: new Float64Array(s.idx.length) }))
-
-    for (let n = 0; n < steps; n++) {
-      leapfrog(spans, p, qx, qy, qz, kx, ky, kz, pa, pb, sy, sz)
-      if (n < src.length) for (let s = 0; s < srcCells.length; s++) p[srcCells[s]] += src[n] * srcScale[s]
-      for (let r = 0; r < R; r++) recordings[r][n] = p[recCells[r]]
-      for (let s = 0; s < sliceDefs.length; s++) {
-        const def = sliceDefs[s], a = acc[s]
-        const cr = Math.cos(def.omega * n), ci = -Math.sin(def.omega * n)
-        for (let i = 0; i < def.idx.length; i++) { const v = p[def.idx[i]]; a.re[i] += v * cr; a.im[i] += v * ci }
-      }
-      if (onProgress) {
-        const pct = Math.floor((100 * (run * steps + n + 1)) / totalSteps)
-        if (pct > lastReport && pct < 100) { lastReport = pct; onProgress(pct / 100) }
-      }
-    }
-
-    // Power spectra of this run: mean over the averaging points, and per probe.
-    let avg: Float64Array | null = null
-    const probes: Float64Array[] = []
-    for (let r = 0; r < R; r++) {
-      const sig = recordings[r]
-      for (let n = 0; n < steps; n++) sig[n] *= decay[n]
-      const sp = spectrum(sig, fs, { window: 'tail' })
-      if (!freqs) {
-        bins = sp.freqs.findIndex((f) => f > fMax)
-        if (bins < 0) bins = sp.freqs.length
-        freqs = sp.freqs.slice(0, bins)
-      }
-      const pow = new Float64Array(bins)
-      for (let k = 0; k < bins; k++) pow[k] = 10 ** (sp.db[k] / 10)
-      if (r < avgCells.length) {
-        avg ??= new Float64Array(bins)
-        for (let k = 0; k < bins; k++) avg[k] += pow[k] / avgCells.length
-      } else probes.push(pow)
-    }
-    runSpectra.push({ avg: avg!, probes })
-    runSlices.push(acc)
-  })
-  onProgress?.(1)
-
-  // Combine runs with the band crossfade.
-  const f = freqs!
-  const combine = (pick: (run: number) => Float64Array) => {
-    const out = new Float32Array(bins)
-    for (let k = 0; k < bins; k++) {
-      let s = 0
-      for (let b = 0; b < bands.length; b++) {
-        const w = bandWeight(bands, b, f[k])
-        if (w) s += w * pick(runOf[b])[k]
-      }
-      out[k] = 10 * Math.log10(s + 1e-30)
-    }
-    return out
+  for (const c of cells) {
+    const gl = (COURANT * area[c]) / (2 * veff[c])
+    pa[c] = (1 - gl) / (1 + gl)
+    pb[c] = COURANT / (veff[c] * (1 + gl))
   }
-  const avgDb = combine((r) => runSpectra[r].avg)
-  const probesDb = probeCells.map((_, i) => combine((r) => runSpectra[r].probes[i]))
+  const p = new Float32Array(N), qx = new Float32Array(N), qy = new Float32Array(N), qz = new Float32Array(N)
+  const recordings = Array.from(recCells, () => new Float32Array(steps))
+  const slices = s.slices.map((d) => ({ re: new Float64Array(d.idx.length), im: new Float64Array(d.idx.length) }))
+  const srcScale = srcCells.map((c) => 1 / veff[c])
+  let srcEnd = steps
+  while (srcEnd > 0 && src[srcEnd - 1] === 0) srcEnd--
 
-  const slices: SimSlice[] = sliceDefs.map((def, s) => {
+  for (let n = 0; n < steps; n++) {
+    leapfrog(spans, p, qx, qy, qz, kx, ky, kz, pa, pb, sy, sz)
+    if (n < srcEnd) for (let i = 0; i < srcCells.length; i++) p[srcCells[i]] += src[n] * srcScale[i]
+    for (let r = 0; r < recCells.length; r++) recordings[r][n] = p[recCells[r]]
+    for (let i = 0; i < s.slices.length; i++) {
+      const def = s.slices[i], a = slices[i]
+      const cr = Math.cos(def.omega * n), ci = -Math.sin(def.omega * n)
+      for (let j = 0; j < def.idx.length; j++) { const v = p[def.idx[j]]; a.re[j] += v * cr; a.im[j] += v * ci }
+    }
+    tick(n + 1)
+  }
+  return { recordings, slices }
+}
+
+/**
+ * Divergence guard: a passive system never gains energy once the source has stopped, so non-finite
+ * samples or a final tenth far louder than the second tenth mean the run went unstable.
+ */
+export function diverged(recordings: Float32Array[]): boolean {
+  const steps = recordings[0]?.length ?? 0
+  const tenth = Math.max(1, Math.floor(steps / 10))
+  let early = 0, late = 0, all = 0
+  for (const r of recordings) {
+    for (let n = 0; n < steps; n++) all += r[n] * r[n]
+    for (let n = tenth; n < 2 * tenth; n++) early += r[n] * r[n]
+    for (let n = steps - tenth; n < steps; n++) late += r[n] * r[n]
+  }
+  return !Number.isFinite(all) || late > 100 * early
+}
+
+/** Power spectrum of the source as the field sees it, |j omega S(f)|^2, with the receivers' windows. */
+function excitation(s: Setup, decay: Float32Array, fs: number, bins: number, fFloor: number): Float64Array {
+  const sig = new Float32Array(s.steps)
+  for (let n = 0; n < s.steps; n++) sig[n] = s.src[n] * decay[n]
+  const sp = spectrum(sig, fs, { window: 'tail' })
+  const out = new Float64Array(bins)
+  for (let i = 0; i < bins; i++) {
+    const f = Math.max(sp.freqs[i], fFloor) // below the lowest mode of interest, hold the floor value
+    const j = Math.min(bins - 1, Math.round((f * (2 * (sp.freqs.length - 1))) / fs))
+    const w = (2 * Math.PI * f) / (2 * Math.PI * 1000)
+    out[i] = w * w * 10 ** (sp.db[j] / 10)
+  }
+  return out
+}
+
+/** Windowed power spectra of one run, divided by the excitation: mean over averaging points, and per probe. */
+function runSpectra(
+  s: Setup, recordings: Float32Array[], decay: Float32Array, fs: number, bins: number, exc: Float64Array,
+): { avg: Float64Array; probes: Float64Array[] } {
+  const avg = new Float64Array(bins)
+  const probes: Float64Array[] = []
+  recordings.forEach((sig, r) => {
+    for (let n = 0; n < sig.length; n++) sig[n] *= decay[n]
+    const sp = spectrum(sig, fs, { window: 'tail' })
+    const pow = new Float64Array(bins)
+    for (let i = 0; i < bins; i++) pow[i] = 10 ** (sp.db[i] / 10) / exc[i]
+    if (r < s.avgCount) for (let i = 0; i < bins; i++) avg[i] += pow[i] / s.avgCount
+    else probes.push(pow)
+  })
+  return { avg, probes }
+}
+
+/** Crossfade the runs' power spectra between band centres and convert to dB. */
+function combineBands(s: Setup, freqs: Float32Array, pick: (run: number) => Float64Array): Float32Array {
+  const out = new Float32Array(freqs.length)
+  for (let i = 0; i < freqs.length; i++) {
+    let sum = 0
+    for (let b = 0; b < s.bands.length; b++) {
+      const w = bandWeight(s.bands, b, freqs[i])
+      if (w) sum += w * pick(s.runOf[b])[i]
+    }
+    out[i] = 10 * Math.log10(sum + 1e-30)
+  }
+  return out
+}
+
+function sliceMaps(s: Setup, runSlices: SliceAcc[][]): SimSlice[] {
+  const { vol } = s.g
+  return s.slices.map((def, si) => {
     const values = new Float32Array(def.idx.length)
     let max = -Infinity
     for (let i = 0; i < def.idx.length; i++) {
       let pw = 0
-      for (let b = 0; b < bands.length; b++) {
-        const w = bandWeight(bands, b, def.f)
-        if (w) { const a = runSlices[runOf[b]][s]; pw += w * (a.re[i] ** 2 + a.im[i] ** 2) }
+      for (let b = 0; b < s.bands.length; b++) {
+        const w = bandWeight(s.bands, b, def.f)
+        if (w) { const a = runSlices[s.runOf[b]][si]; pw += w * (a.re[i] ** 2 + a.im[i] ** 2) }
       }
       values[i] = 10 * Math.log10(pw + 1e-30)
       if (vol[def.idx[i]] > 0 && values[i] > max) max = values[i]
@@ -452,13 +508,17 @@ export function simulate(d: Design, lib: Library, opts: SimOptions, onProgress?:
     for (let i = 0; i < values.length; i++) values[i] = vol[def.idx[i]] > 0 ? values[i] - max : NaN
     return { axis: def.axis, at: def.at, f: def.f, w: def.w, h: def.h, values }
   })
+}
 
-  // Modes from the averaged response; axis when within 3% of an axial mode of the inner cavity.
-  const lowest = C / 2 / (Math.max(inner.x, inner.y, inner.z) / 1000)
-  const axial = rectModes(inner, fMax * 1.03, C).filter((m) => m.kind === 'axial')
-  const windowBw = 1 / (Math.PI * tau) // Hz added to every -3 dB bandwidth by the exponential window
-  const minBw = 1 / (steps * dt) // record length limits what a bandwidth can resolve
-  const modes: SimMode[] = findPeaks(f, avgDb, { minProminence: 3, fMin: lowest / 4, fMax }).map((pk) => {
+/**
+ * Peaks of the averaged response; q has the exponential window's extra bandwidth removed (floored at the
+ * record's resolution). axis is set when the peak is within 3% of an axial mode of the inner cavity.
+ */
+function labelModes(s: Setup, freqs: Float32Array, avgDb: Float32Array, fMin: number, fMax: number, tau: number): SimMode[] {
+  const axial = rectModes(s.inner, fMax * 1.03, C).filter((m) => m.kind === 'axial')
+  const windowBw = 1 / (Math.PI * tau)
+  const minBw = 1 / (s.steps * s.dt)
+  return findPeaks(freqs, avgDb, { minProminence: 3, fMin, fMax }).map((pk) => {
     let axis: Axis | null = null
     let best = 0.03
     for (const m of axial) {
@@ -468,6 +528,59 @@ export function simulate(d: Design, lib: Library, opts: SimOptions, onProgress?:
     const q = Number.isFinite(pk.q) ? pk.f / Math.max(pk.f / pk.q - windowBw, minBw) : NaN
     return { f: pk.f, level: pk.level, q, axis }
   })
+}
 
-  return { model: 'FDTD estimate', freqs: f, avgDb, probesDb, modes, dx, resolutionMm: dx / SUB, slices }
+/** Test hook: `kappa` fixes the cut-cell padding instead of choosing a stable one. */
+export type SimTuning = { kappa?: number }
+
+export function simulateTuned(
+  d: Design, lib: Library, opts: SimOptions, onProgress: ((p: number) => void) | undefined, tuning: SimTuning,
+): SimResult {
+  const fMax = opts.fMax
+  const s = setup(d, lib, opts)
+  const fs = 1 / s.dt
+  const runs = s.runBands.length
+  let lastReport = -1
+  const report = (run: number, done: number) => {
+    const pct = Math.floor((100 * (run * s.steps + done)) / (runs * s.steps))
+    if (onProgress && pct > lastReport && pct < 100) { lastReport = pct; onProgress(pct / 100) }
+  }
+
+  let veff = chooseVolumes(s, tuning.kappa)
+  let out = s.runBands.map((_, run) => runBand(s, veff, run, (n) => report(run, n)))
+  if (out.some((o) => diverged(o.recordings))) {
+    veff = chooseVolumes(s, SAFE_KAPPA) // provably stable; progress holds until it catches up
+    out = s.runBands.map((_, run) => runBand(s, veff, run, (n) => report(run, n)))
+  }
+  onProgress?.(1)
+
+  // Exponential window on the responses: kills truncation sidelobes (which would show as fake modes
+  // when walls are nearly rigid) at the cost of a known extra bandwidth, removed again from q.
+  const tau = (s.steps * s.dt) / 4
+  const decay = new Float32Array(s.steps)
+  for (let n = 0; n < s.steps; n++) decay[n] = Math.exp(-(n * s.dt) / tau)
+  const n2 = 1 << Math.ceil(Math.log2(s.steps))
+  const bins = Math.min(n2 / 2 + 1, Math.floor((fMax * n2) / fs) + 1)
+  const freqs = new Float32Array(bins).map((_, i) => (i * fs) / n2)
+  const lowest = C / 2 / (Math.max(s.inner.x, s.inner.y, s.inner.z) / 1000)
+  const fMin = lowest / 4
+  const exc = excitation(s, decay, fs, bins, fMin / 2) // held below fMin / 2 so no fake peak forms at fMin
+  const spectra = out.map((o) => runSpectra(s, o.recordings, decay, fs, bins, exc))
+
+  const avgDb = combineBands(s, freqs, (r) => spectra[r].avg)
+  const probesDb = d.sim.probes.map((_, i) => combineBands(s, freqs, (r) => spectra[r].probes[i]))
+  return {
+    model: 'FDTD estimate',
+    freqs,
+    avgDb,
+    probesDb,
+    modes: labelModes(s, freqs, avgDb, fMin, fMax, tau),
+    dx: s.g.dx,
+    resolutionMm: s.g.dx / SUB,
+    slices: sliceMaps(s, out.map((o) => o.slices)),
+  }
+}
+
+export function simulate(d: Design, lib: Library, opts: SimOptions, onProgress?: (p: number) => void): SimResult {
+  return simulateTuned(d, lib, opts, onProgress, {})
 }

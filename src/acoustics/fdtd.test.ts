@@ -3,7 +3,8 @@ import { defaultDesign, defaultLibrary } from '../model/defaults'
 import type { Design, Library, WallInterior } from '../model/schema'
 import { resolveDims } from '../geometry/dimensions'
 import { rectModes } from './analytic'
-import { simulate, type SimMode, type SimResult } from './fdtd'
+import { findPeaks } from './spectrum'
+import { admittance, diverged, simulate, simulateTuned, type SimMode, type SimResult } from './fdtd'
 
 const C = 343
 const dxAt = (fMax: number) => C / (10 * fMax) * 1000 // mm
@@ -54,6 +55,39 @@ const nearest = (modes: SimMode[], f: number) =>
 const strongest = (r: SimResult, n: number) => [...r.modes].sort((a, b) => b.level - a.level).slice(0, n)
 const mean = (xs: number[]) => xs.reduce((a, x) => a + x, 0) / xs.length
 
+describe('admittance (Paris statistical inverse)', () => {
+  const paris = (beta: number) => { const z = 1 / beta; return (8 / z) * (1 + 1 / (1 + z) - (2 / z) * Math.log(1 + z)) }
+  it('maps small alpha to about alpha / 8 and inverts the Paris formula', () => {
+    expect(admittance(0)).toBe(0)
+    expect(admittance(0.01)).toBeCloseTo(0.01 / 8, 4)
+    for (const a of [0.05, 0.2, 0.5, 0.9]) expect(paris(admittance(a))).toBeCloseTo(a, 6)
+    expect(admittance(0.2)).toBeLessThan(admittance(0.5))
+  })
+  it('clamps alpha above the 0.951 ceiling to the peak admittance', () => {
+    expect(admittance(1)).toBeCloseTo(1 / 1.5671, 4)
+    expect(admittance(0.99)).toBe(admittance(1))
+  })
+})
+
+describe('divergence guard', () => {
+  it('flags non-finite or growing recordings only', () => {
+    const steady = Float32Array.from({ length: 1000 }, (_, n) => Math.sin(n / 7))
+    const growing = Float32Array.from({ length: 1000 }, (_, n) => Math.sin(n / 7) * Math.exp(n / 100))
+    expect(diverged([steady])).toBe(false)
+    expect(diverged([growing])).toBe(true)
+    expect(diverged([Float32Array.from([0, 1, NaN, 2, 3, 4, 5, 6, 7, 8, 9, 10])])).toBe(true)
+  })
+  it('reruns with the provably stable padding when a run blows up', () => {
+    // Every far-end cell holds one sub-sample layer of air: unpadded slivers make the scheme unstable.
+    const q = dxAt(1000) / 4
+    const d = box(10 * 4 * q + 0.5 * q, 6 * 4 * q + 0.5 * q, 5 * 4 * q + 0.5 * q)
+    const unpadded = simulateTuned(d, lib(), { fMax: 1000 }, undefined, { kappa: 1e9 })
+    const safe = simulateTuned(d, lib(), { fMax: 1000 }, undefined, { kappa: 6 })
+    expect(unpadded.avgDb.every((v) => Number.isFinite(v))).toBe(true)
+    expect(Array.from(unpadded.avgDb)).toEqual(Array.from(safe.avgDb))
+  })
+})
+
 describe('simulate (FDTD)', { timeout: 60_000 }, () => {
   it('rigid box: first 20 distinct analytic modes each have a sim peak within 2%', () => {
     const d = box(1000, 600, 400)
@@ -62,6 +96,22 @@ describe('simulate (FDTD)', { timeout: 60_000 }, () => {
     expect(want).toHaveLength(20)
     const misses = want.filter((f) => Math.abs(nearest(r.modes, f).f - f) / f > 0.02)
     expect(misses).toEqual([])
+    // Reverse: every clear sim peak below 450 Hz is an analytic mode.
+    const all = rectModes(resolveDims(d).inner, 1000, C).map((m) => m.f)
+    const clear = findPeaks(r.freqs, r.avgDb, { minProminence: 6, fMin: 50, fMax: 450 })
+    expect(clear.length).toBeGreaterThan(0)
+    const strays = clear.filter((pk) => !all.some((f) => Math.abs(pk.f - f) / f <= 0.015))
+    expect(strays).toEqual([])
+  })
+
+  it('reports no excitation peak near fMax / sqrt 2 when every wall absorbs half', () => {
+    const l = lib()
+    l.materials.push({ ...l.materials.find((m) => m.id === 'rigid')!, id: 'half', absorption: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5] })
+    const d = box(1000, 600, 400)
+    d.wallDefault = [{ kind: 'layer', materialId: 'half', thickness: 18 }]
+    const r = simulate(d, l, { fMax: 1000 })
+    const f0 = 1000 / Math.SQRT2
+    expect(r.modes.filter((m) => Math.abs(m.f - f0) / f0 < 0.1)).toEqual([])
   })
 
   it('a dx/4 wall shift moves the lowest mode by about the analytic amount', () => {
@@ -143,6 +193,14 @@ describe('simulate (FDTD)', { timeout: 60_000 }, () => {
     const d = structuredClone(defaultDesign())
     const closed = simulate(d, defaultLibrary(), { fMax: 1000 })
     expect(closed.avgDb.every((v) => Number.isFinite(v))).toBe(true)
+    // The air is a 20 mm shell around the cab: at most a weak, heavily damped shell resonance
+    // (about 730 Hz, where wall and cab absorption is lowest). It is geometric, not the excitation:
+    // it stays put at fMax 1400, where nothing appears near 1400 / sqrt 2.
+    expect(closed.modes.length).toBeLessThanOrEqual(1)
+    expect(closed.modes.every((m) => !(m.q >= 10))).toBe(true)
+    const wider = simulate(d, defaultLibrary(), { fMax: 1400 })
+    expect(wider.modes.filter((m) => Math.abs(m.f - 1400 / Math.SQRT2) / (1400 / Math.SQRT2) < 0.1)).toEqual([])
+    for (const m of closed.modes) expect(Math.abs(nearest(wider.modes, m.f).f - m.f) / m.f).toBeLessThan(0.03)
     d.cabs[0].back = 'open'
     const open = simulate(d, defaultLibrary(), { fMax: 1000 })
     const diff = Math.max(...closed.avgDb.map((v, i) => Math.abs(v - open.avgDb[i])))
