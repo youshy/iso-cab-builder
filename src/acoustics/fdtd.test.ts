@@ -1,0 +1,272 @@
+import { describe, expect, it } from 'vitest'
+import { defaultDesign, defaultLibrary } from '../model/defaults'
+import type { Design, Library, WallInterior } from '../model/schema'
+import { resolveDims } from '../geometry/dimensions'
+import { rectModes } from './analytic'
+import { findPeaks } from './spectrum'
+import { admittance, diverged, simulate, simulateTuned, simAir, sourcePoints, type SimMode, type SimResult } from './fdtd'
+import { cabPose, speakerPositions } from '../geometry/space'
+
+const C = 343
+const dxAt = (fMax: number) => C / (10 * fMax) * 1000 // mm
+
+const lib = (): Library => {
+  const l = defaultLibrary()
+  l.materials.push({
+    id: 'rigid', name: 'Rigid', kind: 'sheet', density: 600, thicknesses: [18],
+    youngsModulus: 1e9, lossFactor: 0, absorption: [0, 0, 0, 0, 0, 0],
+  })
+  return l
+}
+
+/** Rigid rectangular cavity: no cab, no facets, no panels, door on the front so every other wall is usable. */
+const box = (x: number, y: number, z: number): Design => {
+  const d = structuredClone(defaultDesign())
+  d.door.side = 'front'
+  d.dims.mode = 'inside'
+  d.dims.innerSource = 'manual'
+  d.dims.inner = { x, y, z }
+  d.wallDefault = [{ kind: 'layer', materialId: 'rigid', thickness: 18 }]
+  d.sim.cabId = ''
+  return d
+}
+
+const twoFacets = (): WallInterior => ({
+  splitAxis: 'z',
+  facets: [
+    { width: 200, tilt: 7, hinge: 'min' },
+    { width: 200, tilt: 7, hinge: 'max' },
+  ],
+  panelMaterialId: 'rigid',
+  panelThickness: 12,
+  closure: 'fillers',
+  behind: 'insulation',
+})
+
+/** First mode of each group whose members lie within 3% of the group's first mode. */
+function distinctModes(fs: number[], n: number): number[] {
+  const out: number[] = []
+  for (const f of fs) if (out.length === 0 || f >= out[out.length - 1] * 1.03) out.push(f)
+  return out.slice(0, n)
+}
+
+const nearest = (modes: SimMode[], f: number) =>
+  modes.reduce((a, m) => (Math.abs(m.f - f) < Math.abs(a.f - f) ? m : a))
+
+const strongest = (r: SimResult, n: number) => [...r.modes].sort((a, b) => b.level - a.level).slice(0, n)
+const mean = (xs: number[]) => xs.reduce((a, x) => a + x, 0) / xs.length
+
+describe('admittance (Paris statistical inverse)', () => {
+  const paris = (beta: number) => { const z = 1 / beta; return (8 / z) * (1 + 1 / (1 + z) - (2 / z) * Math.log(1 + z)) }
+  it('maps small alpha to about alpha / 8 and inverts the Paris formula', () => {
+    expect(admittance(0)).toBe(0)
+    expect(admittance(0.01)).toBeCloseTo(0.01 / 8, 4)
+    for (const a of [0.05, 0.2, 0.5, 0.9]) expect(paris(admittance(a))).toBeCloseTo(a, 6)
+    expect(admittance(0.2)).toBeLessThan(admittance(0.5))
+  })
+  it('clamps alpha above the 0.951 ceiling to the peak admittance', () => {
+    expect(admittance(1)).toBeCloseTo(1 / 1.5671, 4)
+    expect(admittance(0.99)).toBe(admittance(1))
+  })
+})
+
+describe('divergence guard', () => {
+  it('flags non-finite or growing recordings only', () => {
+    const steady = Float32Array.from({ length: 1000 }, (_, n) => Math.sin(n / 7))
+    const growing = Float32Array.from({ length: 1000 }, (_, n) => Math.sin(n / 7) * Math.exp(n / 100))
+    expect(diverged([steady])).toBe(false)
+    expect(diverged([growing])).toBe(true)
+    expect(diverged([Float32Array.from([0, 1, NaN, 2, 3, 4, 5, 6, 7, 8, 9, 10])])).toBe(true)
+  })
+  it('reruns with the provably stable padding when a run blows up', () => {
+    // Every far-end cell holds one sub-sample layer of air: unpadded slivers make the scheme unstable.
+    const q = dxAt(1000) / 4
+    const d = box(10 * 4 * q + 0.5 * q, 6 * 4 * q + 0.5 * q, 5 * 4 * q + 0.5 * q)
+    const unpadded = simulateTuned(d, lib(), { fMax: 1000 }, undefined, { kappa: 1e9 })
+    const safe = simulateTuned(d, lib(), { fMax: 1000 }, undefined, { kappa: 6 })
+    expect(unpadded.avgDb.every((v) => Number.isFinite(v))).toBe(true)
+    expect(Array.from(unpadded.avgDb)).toEqual(Array.from(safe.avgDb))
+  })
+})
+
+describe('simulate (FDTD)', { timeout: 60_000 }, () => {
+  it('rigid box: first 20 distinct analytic modes each have a sim peak within 2%', () => {
+    const d = box(1000, 600, 400)
+    const r = simulate(d, lib(), { fMax: 1000, duration: 1 })
+    const want = distinctModes(rectModes(resolveDims(d).inner, 1000, C).map((m) => m.f), 20)
+    expect(want).toHaveLength(20)
+    const misses = want.filter((f) => Math.abs(nearest(r.modes, f).f - f) / f > 0.02)
+    expect(misses).toEqual([])
+    // Reverse: every clear sim peak below 450 Hz is an analytic mode.
+    const all = rectModes(resolveDims(d).inner, 1000, C).map((m) => m.f)
+    const clear = findPeaks(r.freqs, r.avgDb, { minProminence: 6, fMin: 50, fMax: 450 })
+    expect(clear.length).toBeGreaterThan(0)
+    const strays = clear.filter((pk) => !all.some((f) => Math.abs(pk.f - f) / f <= 0.015))
+    expect(strays).toEqual([])
+  })
+
+  it('reports no excitation peak near fMax / sqrt 2 when every wall absorbs half', () => {
+    const l = lib()
+    l.materials.push({ ...l.materials.find((m) => m.id === 'rigid')!, id: 'half', absorption: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5] })
+    const d = box(1000, 600, 400)
+    d.wallDefault = [{ kind: 'layer', materialId: 'half', thickness: 18 }]
+    const r = simulate(d, l, { fMax: 1000 })
+    const f0 = 1000 / Math.SQRT2
+    expect(r.modes.filter((m) => Math.abs(m.f - f0) / f0 < 0.1)).toEqual([])
+  })
+
+  it('a dx/4 wall shift moves the lowest mode by about the analytic amount', () => {
+    const fMax = 1000
+    const quarter = dxAt(fMax) / 4
+    const a = box(1000, 600, 400)
+    const b = box(1000 - quarter, 600, 400)
+    const fa = nearest(simulate(a, lib(), { fMax, duration: 1 }).modes, (C / 2) / 1.0).f
+    const fb = nearest(simulate(b, lib(), { fMax, duration: 1 }).modes, (C / 2) / 1.0).f
+    const expected = (C / 2) * (1000 / resolveDims(b).inner.x - 1)
+    expect(expected).toBeCloseTo(1.49, 1)
+    const shift = fb - fa
+    expect(shift).toBeGreaterThan(0)
+    expect(Math.abs(shift - expected)).toBeLessThanOrEqual(0.4 * expected)
+  })
+
+  it('rockwool on the back wall lowers the strongest peaks and their q', () => {
+    const rigid = box(1000, 600, 400)
+    const treated = box(1000, 600, 400)
+    treated.treatments = [{ id: 't1', surface: { wall: 'back' }, materialId: 'rockwool', thickness: 50 }]
+    const rr = strongest(simulate(rigid, lib(), { fMax: 1000 }), 5)
+    const rt = strongest(simulate(treated, lib(), { fMax: 1000 }), 5)
+    expect(mean(rt.map((m) => m.level))).toBeLessThanOrEqual(mean(rr.map((m) => m.level)) - 3)
+    const q = (ms: SimMode[]) => mean(ms.map((m) => m.q).filter((x) => Number.isFinite(x)))
+    expect(q(rt)).toBeLessThan(q(rr))
+  })
+
+  it('tilted facets on the left wall move at least one peak by 1% or more', () => {
+    const flat = box(1000, 600, 400)
+    const faceted = box(1000, 600, 400)
+    faceted.interior.left = twoFacets()
+    const mf = simulate(flat, lib(), { fMax: 1000 }).modes
+    const mt = simulate(faceted, lib(), { fMax: 1000 }).modes
+    const moved = mf.slice(0, 10).filter((m) => Math.abs(nearest(mt, m.f).f - m.f) / m.f >= 0.01)
+    expect(moved.length).toBeGreaterThan(0)
+  })
+
+  it('reports grid, probes, slices, axis labels and progress', () => {
+    const d = box(1000, 600, 400)
+    d.sim.probes = [{ x: 500, y: 300, z: 200 }, { x: 100, y: 100, z: 100 }]
+    const progress: number[] = []
+    const r = simulate(d, lib(), { fMax: 1000, slices: [{ axis: 'y', at: 300, f: 171.5 }] }, (p) => progress.push(p))
+    expect(r.model).toBe('FDTD estimate')
+    expect(r.dx).toBeCloseTo(dxAt(1000), 6)
+    expect(r.resolutionMm).toBeCloseTo(r.dx / 4, 6)
+    expect(r.freqs.length).toBe(r.avgDb.length)
+    expect(r.freqs[r.freqs.length - 1]).toBeLessThanOrEqual(1000)
+    expect(r.probesDb).toHaveLength(2)
+    expect(r.probesDb[0].length).toBe(r.freqs.length)
+    expect(r.slices).toHaveLength(1)
+    const s = r.slices[0]
+    expect(s.values.length).toBe(s.w * s.h)
+    expect(s.w).toBe(Math.ceil(1000 / r.dx))
+    expect(s.h).toBe(Math.ceil(400 / r.dx))
+    expect(nearest(r.modes, 171.5).axis).toBe('x')
+    expect(nearest(r.modes, 285.8).axis).toBe('y')
+    expect(Math.abs(nearest(r.modes, 619.0).f - 619.0)).toBeLessThan(0.02 * 619.0)
+    expect(nearest(r.modes, 619.0).axis).toBeNull()
+    expect(progress.length).toBeGreaterThan(1)
+    expect(progress[progress.length - 1]).toBe(1)
+    expect(progress.every((p, i) => i === 0 || p >= progress[i - 1])).toBe(true)
+  })
+
+  it('stays bounded over a long lossless run with cut cells, a thin panel and an open-back cab', () => {
+    const l = lib()
+    l.materials.find((m) => m.id === 'plywood')!.absorption = [0, 0, 0, 0, 0, 0]
+    const d = box(733.3, 517.1, 455.5)
+    d.interior.top = { ...twoFacets(), splitAxis: 'x', facets: [{ width: 300, tilt: 13.3, hinge: 'max' }, { width: 433.3, tilt: 4.1, hinge: 'min' }] }
+    d.interior.left = { ...twoFacets(), facets: [{ width: 155.5, tilt: 9.7, hinge: 'min' }, { width: 300, tilt: 2.2, hinge: 'max' }] }
+    d.panels = [{ id: 'p', normal: 'z', position: 401.7, u0: 0, u1: 400, v0: 0, v1: 250, layers: [{ kind: 'layer', materialId: 'rigid', thickness: 12 }], insulation: null }]
+    d.cabs[0] = { ...d.cabs[0], w: 400, h: 300, d: 250, back: 'open', speakers: [{ x: 200, y: 150 }] }
+    d.sim.cabId = d.cabs[0].id
+    const r = simulate(d, l, { fMax: 1000, duration: 1 })
+    expect(r.avgDb.every((v) => Number.isFinite(v))).toBe(true)
+    expect(Math.max(...r.avgDb)).toBeLessThan(60)
+  })
+
+  it('default design (cab inside) runs; an open-back cab changes the result', () => {
+    const d = structuredClone(defaultDesign())
+    const closed = simulate(d, defaultLibrary(), { fMax: 1000 })
+    expect(closed.avgDb.every((v) => Number.isFinite(v))).toBe(true)
+    // The air is a 20 mm shell around the cab: at most a weak, heavily damped shell resonance
+    // (about 730 Hz, where wall and cab absorption is lowest). It is geometric, not the excitation:
+    // it stays put at fMax 1400, where nothing appears near 1400 / sqrt 2.
+    expect(closed.modes.length).toBeLessThanOrEqual(1)
+    expect(closed.modes.every((m) => !(m.q >= 10))).toBe(true)
+    const wider = simulate(d, defaultLibrary(), { fMax: 1400 })
+    expect(wider.modes.filter((m) => Math.abs(m.f - 1400 / Math.SQRT2) / (1400 / Math.SQRT2) < 0.1)).toEqual([])
+    for (const m of closed.modes) expect(Math.abs(nearest(wider.modes, m.f).f - m.f) / m.f).toBeLessThan(0.03)
+    d.cabs[0].back = 'open'
+    const open = simulate(d, defaultLibrary(), { fMax: 1000 })
+    const diff = Math.max(...closed.avgDb.map((v, i) => Math.abs(v - open.avgDb[i])))
+    expect(diff).toBeGreaterThan(3)
+  })
+})
+
+describe('sourcePoints', () => {
+  it('sit half a cell in front of each speaker, along its facing', () => {
+    const d = structuredClone(defaultDesign())
+    for (const yaw of [0, 30, 90]) {
+      d.cabYaw = yaw
+      const sp = speakerPositions(d, d.cabs[0])
+      const pts = sourcePoints(d, 10)
+      expect(pts).toHaveLength(sp.length)
+      sp.forEach((s, i) => {
+        expect(pts[i].x).toBeCloseTo(s.p.x + s.facing.x * 5, 6)
+        expect(pts[i].z).toBeCloseTo(s.p.z + s.facing.z * 5, 6)
+        expect(pts[i].y).toBeCloseTo(s.p.y, 6)
+      })
+    }
+  })
+})
+
+describe('open-back baffle follows the cab turn', () => {
+  const open = (yaw: number): Design => {
+    const d = box(1400, 900, 1400)
+    d.cabs[0] = { ...d.cabs[0], w: 600, h: 400, d: 300, back: 'open', speakers: [{ x: 300, y: 200 }] }
+    d.sim.cabId = d.cabs[0].id
+    d.cabYaw = yaw
+    return d
+  }
+  const centreOf = (d: Design) => cabPose(d, d.cabs[0]).centre
+  it('yaw 0 keeps the baffle on the +z face and the cab body hollow', () => {
+    const d = open(0)
+    const c = centreOf(d), air = simAir(d)
+    expect(air({ x: c.x, y: c.y, z: c.z + 150 - 9 })).toBe(false)
+    expect(air({ x: c.x, y: c.y, z: c.z })).toBe(true)
+    expect(air({ x: c.x, y: c.y, z: c.z - 150 + 9 })).toBe(true)
+  })
+  it('yaw 90 puts it on the +x face', () => {
+    const d = open(90)
+    const c = centreOf(d), air = simAir(d)
+    expect(air({ x: c.x + 150 - 9, y: c.y, z: c.z })).toBe(false)
+    expect(air({ x: c.x - 150 + 9, y: c.y, z: c.z })).toBe(true)
+    expect(air({ x: c.x, y: c.y, z: c.z + 150 - 9 })).toBe(true)
+  })
+  it('yaw 180 puts it on the -z face', () => {
+    const d = open(180)
+    const c = centreOf(d), air = simAir(d)
+    expect(air({ x: c.x, y: c.y, z: c.z - 150 + 9 })).toBe(false)
+    expect(air({ x: c.x, y: c.y, z: c.z + 150 - 9 })).toBe(true)
+  })
+})
+
+describe('simulate source placement', () => {
+  it('a turned speaker gives a different response than an unturned one', { timeout: 60_000 }, () => {
+    const mk = (yaw: number) => {
+      const d = box(1400, 900, 1400)
+      d.cabs[0] = { ...d.cabs[0], w: 60, h: 60, d: 60, back: 'closed', speakers: [{ x: 30, y: 30 }] }
+      d.sim.cabId = d.cabs[0].id
+      d.cabYaw = yaw
+      return simulate(d, lib(), { fMax: 500, duration: 0.3 }).avgDb
+    }
+    const [a, b] = [mk(0), mk(90)]
+    expect(Math.max(...a.map((v, i) => Math.abs(v - b[i])))).toBeGreaterThan(0.05)
+  })
+})

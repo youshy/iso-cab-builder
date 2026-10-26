@@ -1,0 +1,253 @@
+import { describe, expect, it } from 'vitest'
+import { defaultDesign, defaultLibrary } from '../model/defaults'
+import type { Design } from '../model/schema'
+import { DesignSchema } from '../model/schema'
+import { doorLayout, type DoorLayout, type LeafLayout } from './doors'
+import { resolveDims } from '../geometry/dimensions'
+
+const lib = defaultLibrary()
+/** doorLayout for a dual-door design, with the leaves known to be present. */
+const dualLayout = (d: Design, l = lib): DoorLayout & { outer: LeafLayout; inner: LeafLayout } => {
+  const r = doorLayout(d, l)
+  if (!r.outer || !r.inner) throw new Error('expected dual door layout')
+  return { ...r, outer: r.outer, inner: r.inner }
+}
+const gapStack = (): Design['wallDefault'] => [
+  { kind: 'layer', materialId: 'plywood', thickness: 18 },
+  { kind: 'gap', width: 50, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' },
+  { kind: 'layer', materialId: 'mdf', thickness: 18 },
+]
+
+describe('doorLayout', () => {
+  it('default design: left side, 390x1170 opening, 440x1220 leaf, 3 hinges', () => {
+    const l = dualLayout(defaultDesign(), lib)
+    expect(l.side).toBe('left')
+    // opening = cab face (360 d, 1140 h) + 2 * 15 margin; leaf = opening + 2 * 25 overlap
+    expect(l.outer.opening).toEqual({ w: 390, h: 1170 })
+    expect(l.outer.leaves).toEqual([{ w: 440, h: 1220, t: 18 }])
+    // hinges at 150 inset, 1220 / 2, 1220 - 150
+    expect(l.outer.hinges).toEqual([{ edge: 'left', positions: [150, 610, 1070] }])
+    expect(l.outer.mount).toBe('shell')
+    expect(l.cabsThrough.every((c) => c.fits)).toBe(true)
+  })
+
+  it('latches sit on the opposite edge, evenly spaced from the inset', () => {
+    const l = dualLayout(defaultDesign(), lib)
+    expect(l.outer.latches).toEqual([100, 1120]) // 100 inset, 1220 - 100
+  })
+
+  it('framed, gap off: frame lines the reveal; cutout grows by the strips', () => {
+    const d = defaultDesign()
+    d.door.outer.framed = true
+    d.door.inner.framed = true
+    const l = dualLayout(d, lib)
+    expect(l.outer.frame).toEqual({ width: 45, depth: 12 }) // betweenDepth = 36 - (18 + 6)
+    expect(l.inner.frame).toEqual({ width: 45, depth: 18 }) // the MDF layer wholly within the 24 mm rebate
+    expect(l.inner.pocket).toEqual({ w: 444, h: 1224 }) // leaf + 2 mm each side
+    expect(l.inner.cutout).toEqual({ w: 534, h: 1314 }) // pocket + 2 * 45 frame strips
+    expect(l.outer.cutout).toEqual({ w: 480, h: 1260 }) // opening + 2 * 45 frame strips
+    expect(l.outer.opening).toEqual({ w: 390, h: 1170 })
+    expect(l.cabsThrough.every((c) => c.fits)).toBe(true)
+  })
+
+  it('framed, gap on: frame depth is the shell or liner thickness', () => {
+    const d = defaultDesign()
+    d.wallDefault = gapStack()
+    d.door.outer.framed = true
+    d.door.inner.framed = true
+    const l = dualLayout(d, lib)
+    expect(l.outer.frame?.depth).toBe(18)
+    expect(l.inner.frame?.depth).toBe(18)
+  })
+
+  it('unframed cutout equals the clear opening', () => {
+    expect(dualLayout(defaultDesign(), lib).outer.cutout).toEqual({ w: 390, h: 1170 })
+  })
+
+  it('leaf shorter than 900 gets 2 hinges', () => {
+    const d = defaultDesign()
+    d.door.opening = { w: 390, h: 600 }
+    expect(dualLayout(d, lib).outer.hinges[0].positions).toEqual([150, 650 - 150])
+  })
+
+  it('top hinge edge spaces hinges along the leaf width', () => {
+    const d = defaultDesign()
+    d.door.outer.hingeEdge = 'top'
+    const l = dualLayout(d, lib)
+    expect(l.outer.hinges).toEqual([{ edge: 'top', positions: [150, 290] }])
+    expect(l.outer.swingRadius).toBe(1220) // top hinge: swing is the leaf height
+  })
+
+  it('outer leaf opening in with insulation between collides', () => {
+    const d = defaultDesign()
+    d.door.outer.opening = 'in'
+    const l = dualLayout(d, lib)
+    expect(l.collisions.some((c) => c.startsWith("Outer door can't swing inwards: needs 440 mm, has 12 mm"))).toBe(true)
+  })
+
+  it('gap toggle moves inner mount liner <-> rebate and recomputes betweenDepth', () => {
+    const d = defaultDesign()
+    const off = dualLayout(d, lib)
+    expect(off.inner.mount).toBe('rebate')
+    expect(off.inner.rebate).toEqual({ depth: 24, width: 27 }) // overlap + 2 mm clearance
+    expect(off.betweenDepth).toBe(12)
+    d.wallDefault = gapStack()
+    const on = dualLayout(d, lib)
+    expect(on.inner.mount).toBe('liner')
+    expect(on.betweenDepth).toBe(86 - 24)
+    expect(on.outer.leaves[0].t).toBe(18)
+  })
+
+  it('split leaves sum to leaf width minus 3 and hinge both sides', () => {
+    const d = defaultDesign()
+    d.door.outer.opening = 'split'
+    const l = dualLayout(d, lib)
+    expect(l.outer.leaves).toHaveLength(2)
+    expect(l.outer.leaves[0].w + l.outer.leaves[1].w).toBe(440 - 3)
+    expect(l.outer.hinges.map((h) => h.edge)).toEqual(['left', 'right'])
+  })
+
+  it('inner out is a note when outer opens out, a collision when outer opens in', () => {
+    const d = defaultDesign()
+    d.door.inner.opening = 'out'
+    expect(dualLayout(d, lib).notes).toContain('Open the outer door first')
+    d.door.outer.opening = 'in'
+    expect(dualLayout(d, lib).collisions).toContain(
+      "Inner door can't open outwards while the outer door opens inwards",
+    )
+  })
+
+  it('inner in collides when it would hit the sim cab', () => {
+    const d = defaultDesign()
+    d.door.inner.opening = 'in'
+    const l = dualLayout(d, lib)
+    expect(l.collisions.some((c) => c.startsWith("Inner door can't swing inwards: needs 440 mm, has 20 mm"))).toBe(true)
+  })
+
+  it('not enough depth when the inner leaf and seal fill the wall', () => {
+    const d = defaultDesign()
+    d.door.inner.stack = [{ kind: 'layer', materialId: 'plywood', thickness: 30 }]
+    const l = dualLayout(d, lib)
+    expect(l.collisions).toContain('Not enough wall depth for two doors')
+  })
+
+  it('opening override too small blocks the cab', () => {
+    const d = defaultDesign()
+    d.door.opening = { w: 300, h: 1010 }
+    expect(dualLayout(d, lib).cabsThrough[0].fits).toBe(false)
+  })
+})
+
+describe('several cavities', () => {
+  const triple = (): Design['wallDefault'] => [
+    { kind: 'layer', materialId: 'plywood', thickness: 18 },
+    { kind: 'gap', width: 25, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' },
+    { kind: 'layer', materialId: 'mdf', thickness: 12 },
+    { kind: 'gap', width: 25, decoupling: 'clips', fill: 'insulation', fillMaterialId: 'rockwool' },
+    { kind: 'layer', materialId: 'mdf', thickness: 18 },
+  ]
+  it('dual: outer leaf is the first group, inner the last, one middle cutout', () => {
+    const d = defaultDesign()
+    d.wallDefault = triple()
+    const r = dualLayout(d, lib)
+    expect(r.outer.leaves[0].t).toBe(18)
+    expect(r.inner.mount).toBe('liner')
+    expect(r.middleCutouts).toEqual([r.inner.opening])
+    expect(r.betweenDepth).toBe(98 - r.inner.rebate!.depth)
+  })
+  it('no middle cutouts for one cavity', () => {
+    const d = defaultDesign()
+    d.wallDefault = gapStack()
+    expect(dualLayout(d, lib).middleCutouts).toEqual([])
+  })
+  it('wall door: a seal line per leaf group face', () => {
+    const d = structuredClone(defaultDesign())
+    d.door.kind = 'wall'
+    d.door.side = 'left'
+    d.wallDefault = triple()
+    expect(doorLayout(d, lib).wall!.seals.map((s) => s.line)).toEqual(['shell', 'middle 1', 'liner'])
+  })
+})
+
+describe('whole-wall door', () => {
+  const wallDesign = (): Design => {
+    const d = structuredClone(defaultDesign())
+    d.door.kind = 'wall'
+    d.door.side = 'left'
+    return d
+  }
+
+  it('left wall: panel is outer z x y, mass from layer densities, one shell seal', () => {
+    const d = wallDesign()
+    const o = resolveDims(d).outer
+    const l = doorLayout(d, lib)
+    expect(l.kind).toBe('wall')
+    expect(l.outer).toBeNull()
+    expect(l.inner).toBeNull()
+    const w = l.wall!
+    expect(w.side).toBe('left')
+    expect(w.panel).toEqual({ w: o.z, h: o.y, t: 36 })
+    expect(w.massKg).toBeCloseTo((600 * 0.018 + 750 * 0.018) * ((o.z * o.y) / 1e6), 2)
+    expect(w.seals).toEqual([{ line: 'shell', perimeterMm: 2 * (o.z + o.y) }])
+    expect(w.swingRadius).toBe(o.z)
+    expect(l.cabsThrough.every((c) => c.fits)).toBe(true)
+    expect(w.notes).toContain('Seals are not included in the sound estimate')
+  })
+
+  it('front wall panel is outer x by y', () => {
+    const d = wallDesign()
+    d.door.side = 'front'
+    const o = resolveDims(d).outer
+    expect(doorLayout(d, lib).wall!.panel).toMatchObject({ w: o.x, h: o.y })
+  })
+
+  it('a gap in the stack adds a liner seal line on the inner face', () => {
+    const d = wallDesign()
+    d.wallDefault = gapStack()
+    const i = resolveDims(d).inner
+    const w = doorLayout(d, lib).wall!
+    expect(w.seals.map((s) => s.line)).toEqual(['shell', 'liner'])
+    expect(w.seals[1].perimeterMm).toBe(2 * (i.z + i.y))
+  })
+
+  it('collides when the room in front is smaller than the swing radius', () => {
+    const d = wallDesign()
+    d.door.roomClearance = 300
+    const w = doorLayout(d, lib).wall!
+    expect(w.swingRadius).toBeGreaterThan(300)
+    expect(w.collisions.join(' ')).toContain('needs')
+    expect(doorLayout(d, lib).collisions).toEqual(w.collisions)
+    d.door.roomClearance = 5000
+    expect(doorLayout(d, lib).wall!.collisions).toEqual([])
+  })
+
+  it('hinges: 3 for an edge under 1200, 4 from 1200', () => {
+    const d = wallDesign()
+    // default panel h = outer y = 1180 + 72 = 1252, already 1200 or more
+    expect(doorLayout(d, lib).wall!.hinges).toHaveLength(4)
+    d.dims.innerSource = 'manual'
+    d.dims.inner.y = 1000 // outer y = 1072, under 1200
+    expect(doorLayout(d, lib).wall!.hinges).toHaveLength(3)
+    d.dims.inner.y = 1400
+    const w = doorLayout(d, lib).wall!
+    expect(w.hinges).toHaveLength(4)
+    expect(w.hingeEdge).toBe('left')
+    expect(w.hinges[0]).toBe(150) // butt-75 edge inset
+    expect(w.latches).toHaveLength(2)
+  })
+
+  it('old JSON without kind and roomClearance parses with defaults', () => {
+    const raw = JSON.parse(JSON.stringify(defaultDesign()))
+    delete raw.door.kind
+    delete raw.door.roomClearance
+    const d = DesignSchema.parse(raw)
+    expect(d.door.kind).toBe('dual')
+    expect(d.door.roomClearance).toBe(600)
+  })
+
+  it('dual mode has no wall layout', () => {
+    const l = doorLayout(defaultDesign(), lib)
+    expect(l.kind).toBe('dual')
+    expect(l.wall).toBeNull()
+  })
+})
